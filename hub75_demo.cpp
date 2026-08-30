@@ -1,9 +1,17 @@
 #include "pico/stdlib.h"
 
+#include <cstdio>
+#include <cstring>
+#include <ctime>
+
 // Pico W devices use a GPIO on the WIFI chip for the LED,
 // so when building for Pico W, CYW43_WL_GPIO_LED_PIN will be defined
-#ifdef CYW43_WL_GPIO_LED_PIN
+#if defined(CYW43_WL_GPIO_LED_PIN) && __has_include("pico/cyw43_arch.h") && __has_include("lwip/apps/sntp.h")
+#define HUB75_HAS_WIFI 1
 #include "pico/cyw43_arch.h"
+#include "lwip/apps/sntp.h"
+#else
+#define HUB75_HAS_WIFI 0
 #endif
 
 #include "hardware/clocks.h"
@@ -14,26 +22,49 @@
 #include "pico/multicore.h"
 #endif
 
-// Example images
-#if (MATRIX_PANEL_WIDTH * CHAIN_COLS) == 128 && (MATRIX_PANEL_HEIGHT * CHAIN_ROWS) == 64
-#include "taylor_swift_128x64.h"
-#elif (MATRIX_PANEL_WIDTH * CHAIN_COLS) == 64 && (MATRIX_PANEL_HEIGHT * CHAIN_ROWS) == 64
-#include "taylor_swift_64x64.h"
-#else
-#include "matreshka_32x16.h"
+#if USE_PICO_GRAPHICS == true
+using namespace pimoroni;
 #endif
 
-// Example effects
-#include "antialiased_line.hpp"
-#include "bouncing_balls.hpp"
-#include "rotator.cpp"
-#include "analog_clock.cpp"
-#include "fire_effect.hpp"
-#include "hue_value_spectrum.hpp"
-#include "pixel_fill.hpp"
-#include "grey_scale_stripes.hpp"
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#endif
 
-static int demo_index = 0; ///< Example selector
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD ""
+#endif
+
+#ifndef WIFI_AUTH
+#if HUB75_HAS_WIFI
+#define WIFI_AUTH CYW43_AUTH_WPA2_AES_PSK
+#else
+#define WIFI_AUTH 0
+#endif
+#endif
+
+#ifndef NTP_SERVER
+#define NTP_SERVER "fritz.box"
+#endif
+
+constexpr time_t MIN_VALID_UNIX_TIME = 1700000000;
+constexpr uint32_t VIEW_SWITCH_MS = 10000;
+
+enum class ViewId : uint8_t
+{
+    Clock = 0,
+    Weather,
+    HomeAssistant,
+    Nina,
+    Count
+};
+
+struct AppState
+{
+    bool wifi_supported = HUB75_HAS_WIFI;
+    bool wifi_connected = false;
+    bool time_synced = false;
+    time_t now = 0;
+};
 
 // Perform initialisation
 int pico_led_init(void)
@@ -44,7 +75,7 @@ int pico_led_init(void)
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
     return PICO_OK;
-#elif defined(CYW43_WL_GPIO_LED_PIN)
+#elif HUB75_HAS_WIFI
     // For Pico W devices we need to initialise the driver etc
     return cyw43_arch_init();
 #else
@@ -58,7 +89,7 @@ void pico_set_led(bool led_on)
 #if defined(PICO_DEFAULT_LED_PIN)
     // Just set the GPIO on or off
     gpio_put(PICO_DEFAULT_LED_PIN, led_on);
-#elif defined(CYW43_WL_GPIO_LED_PIN)
+#elif HUB75_HAS_WIFI
     // Ask the wifi "driver" to set the GPIO on or off
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
 #endif
@@ -80,20 +111,79 @@ int led_init(void)
     return PICO_OK;
 }
 
-/**
- * @brief Cycle through all examples
- *
- * @param t pointer to repeating timer
- * @return true
- */
-bool skip_to_next_demo(__unused struct repeating_timer *t)
+#if USE_PICO_GRAPHICS == true
+class DigitalClockDisplay : public PicoGraphics_PenRGB888
 {
-    if (++demo_index > 7)
+private:
+    Pen bg;
+    Pen fg;
+    Pen accent;
+
+    int last_second = -1;
+    bool colon_on = true;
+
+public:
+    DigitalClockDisplay(uint width, uint height) : PicoGraphics_PenRGB888(width, height, nullptr)
     {
-        demo_index = 0; // Cycle through all examples
+        bg = create_pen(0, 0, 0);
+        fg = create_pen(235, 244, 255);
+        accent = create_pen(120, 220, 160);
+        set_font(&font14_outline);
     }
-    return true;
-}
+
+    void draw_waiting(const char *msg)
+    {
+        set_pen(bg);
+        clear();
+        set_pen(fg);
+        text("WiFi/NTP", Point(2, 1), false, 0.5f, 0.0f, false);
+        set_pen(accent);
+        text(msg, Point(2, DISPLAY_HEIGHT > 20 ? DISPLAY_HEIGHT - 9 : 9), false, 0.5f, 0.0f, false);
+    }
+
+    void draw_time(time_t now)
+    {
+        struct tm local_tm;
+        localtime_r(&now, &local_tm);
+
+        if (local_tm.tm_sec == last_second)
+        {
+            return;
+        }
+
+        last_second = local_tm.tm_sec;
+        colon_on = !colon_on;
+
+        char line[9];
+        std::snprintf(line, sizeof(line), "%02d%c%02d", local_tm.tm_hour, colon_on ? ':' : ' ', local_tm.tm_min);
+
+        char sec[3];
+        std::snprintf(sec, sizeof(sec), "%02d", local_tm.tm_sec);
+
+        set_pen(bg);
+        clear();
+
+        set_pen(fg);
+        text(line, Point(2, 4), false, 0.9f, 0.0f, false);
+
+        set_pen(accent);
+        text(sec, Point(DISPLAY_WIDTH - 14, DISPLAY_HEIGHT - 9), false, 0.5f, 0.0f, false);
+    }
+
+    void draw_info_page(const char *title, const char *line1, const char *line2)
+    {
+        set_pen(bg);
+        clear();
+
+        set_pen(fg);
+        text(title, Point(2, 1), false, 0.6f, 0.0f, false);
+
+        set_pen(accent);
+        text(line1, Point(2, DISPLAY_HEIGHT > 20 ? 13 : 9), false, 0.5f, 0.0f, false);
+        text(line2, Point(2, DISPLAY_HEIGHT > 20 ? 22 : 15), false, 0.5f, 0.0f, false);
+    }
+};
+#endif
 
 /**
  * @brief Secondary core entry point.
@@ -134,120 +224,156 @@ void initialize()
 #endif
 }
 
+#if HUB75_HAS_WIFI
+static bool connect_wifi()
+{
+    if (std::strlen(WIFI_SSID) == 0u || std::strlen(WIFI_PASSWORD) == 0u)
+    {
+        printf("WIFI_SSID / WIFI_PASSWORD missing. Configure via CMake cache.\n");
+        return false;
+    }
+
+    cyw43_arch_enable_sta_mode();
+    printf("Connecting to Wi-Fi SSID '%s'...\n", WIFI_SSID);
+
+    int rc = cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, WIFI_AUTH, 30000);
+    if (rc != 0)
+    {
+        printf("Wi-Fi connect failed: %d\n", rc);
+        return false;
+    }
+
+    printf("Wi-Fi connected.\n");
+    return true;
+}
+
+static void start_sntp()
+{
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, NTP_SERVER);
+    sntp_init();
+    printf("SNTP started, server: %s\n", NTP_SERVER);
+}
+
+static bool wait_for_time_sync(uint32_t timeout_ms)
+{
+    const absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
+
+    while (!time_reached(deadline))
+    {
+        const time_t now = time(nullptr);
+        if (now > MIN_VALID_UNIX_TIME)
+        {
+            return true;
+        }
+        sleep_ms(200);
+    }
+    return false;
+}
+#endif
+
 int main()
 {
     initialize();
 
-    // The following examples are animated. In the update function the color of the modified image data is ramped up to 10 bits and the image data is interwoven.
-
-    // Create bouncing balls using pico_graphics functionality
-    BouncingBalls bouncingBalls(10, DISPLAY_WIDTH, DISPLAY_HEIGHT);
-
-    // Create rotating antialiased line using pico_graphics functionality
-    Rotator rotator(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-
-    // Create analog clock using pico_graphics functionality
-    AnalogClock analogClock(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-
-    // Create fire effect using pico_graphics functionality
-    FireEffect fireEffect = FireEffect(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-
-    HueValueSpectrum hueValueSpectrum = HueValueSpectrum(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-
-    PixelFill pixelFill = PixelFill(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-
-    GreyScaleStripes greyScaleStripes = GreyScaleStripes(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-
-    // Cycle through the examples - move to next example every 15 seconds
-    struct repeating_timer timer;
-    add_repeating_timer_ms(-15.0 / 1.0 * 1000.0, skip_to_next_demo, NULL, &timer);
-
-    // The Hub75 driver is constantly running on core 1 with a frequency usually much higher than 200Hz.
-    // CPU load (on core 1) is low due to DMA and PIO usage.
-    // The animated examples are updated at 100Hz.
-    float hz = 100.0f;
+    float hz = 20.0f;
     float ms = 1000.0f / hz;
 
     // set basis brightness of matrix panel
     setBasisBrightness(8);
 
     // set full brightness of panel
-    float intensity = 1.0f;
-    setIntensity(intensity);
+    setIntensity(1.0f);
 
-    float step = -0.005f;
+#if USE_PICO_GRAPHICS == true
+    DigitalClockDisplay clockView(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+#endif
+
+    AppState app;
+
+#if HUB75_HAS_WIFI
+    const char *tz = "CET-1CEST,M3.5.0/2,M10.5.0/3";
+    setenv("TZ", tz, 1);
+    tzset();
+
+#if USE_PICO_GRAPHICS == true
+    clockView.draw_waiting("Connecting...");
+    update(&clockView);
+#endif
+
+    bool wifi_ok = connect_wifi();
+    app.wifi_connected = wifi_ok;
+    if (wifi_ok)
+    {
+        start_sntp();
+    }
+#else
+    printf("Wi-Fi support unavailable in this SDK build; showing fallback clock.\n");
+#endif
+
+    ViewId last_view = ViewId::Count;
 
     while (true)
     {
-        if (demo_index == 0)
+        const uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+        const ViewId view = static_cast<ViewId>((now_ms / VIEW_SWITCH_MS) % static_cast<uint32_t>(ViewId::Count));
+
+#if USE_PICO_GRAPHICS == true
+#if HUB75_HAS_WIFI
+        app.now = time(nullptr);
+        app.time_synced = app.now > MIN_VALID_UNIX_TIME;
+
+        if (!app.time_synced)
         {
-            // Image data is in r8, g8, b8 format
-            bouncingBalls.bounce();
-            update(&bouncingBalls);
+            clockView.draw_waiting("Syncing NTP...");
+            if (wait_for_time_sync(200))
+            {
+                app.now = time(nullptr);
+                app.time_synced = app.now > MIN_VALID_UNIX_TIME;
+            }
         }
-        else if (demo_index == 1)
-        {
-            // Image data is in r8, g8, b8 format
-            fireEffect.burn();
-            update(&fireEffect);
-        }
-        else if (demo_index == 2)
-        {
-            // Taylor Swift - image data is in b8, g8, r8 format
-            // By iHeartRadioCA, CC BY 3.0, https://commons.wikimedia.org/w/index.php?curid=137551448
-#if (MATRIX_PANEL_WIDTH * CHAIN_COLS) == 128 && (MATRIX_PANEL_HEIGHT * CHAIN_ROWS) == 64
-            update_bgr(taylor_swift_128x64);
-#elif (MATRIX_PANEL_WIDTH * CHAIN_COLS) == 64 && (MATRIX_PANEL_HEIGHT * CHAIN_ROWS) == 64
-            update_bgr(taylor_swift_64x64);
-#elif (MATRIX_PANEL_WIDTH * CHAIN_COLS) == 32 && (MATRIX_PANEL_HEIGHT * CHAIN_ROWS) == 16
-            update_bgr(matreshka_32x16);
 #else
-            demo_index = 3;
-            continue;
+        app.now = time(nullptr);
+        app.time_synced = true;
 #endif
-        }
-        else if (demo_index == 3)
+
+        if (view == ViewId::Clock)
         {
-            rotator.draw();
-            update(&rotator);
+            if (app.time_synced)
+            {
+                clockView.draw_time(app.now);
+            }
+            else
+            {
+                clockView.draw_waiting("No time yet");
+            }
         }
-        else if (demo_index == 4)
+        else if (view == ViewId::Weather)
         {
-            analogClock.draw();
-            update(&analogClock);
+            if (view != last_view)
+            {
+                clockView.draw_info_page("Wetter", "TODO", "MQTT/HA");
+            }
         }
-        else if (demo_index == 5)
+        else if (view == ViewId::HomeAssistant)
         {
-            // Image data is in r8, g8, b8 format
-            hueValueSpectrum.drawShades();
-            update(&hueValueSpectrum);
+            if (view != last_view)
+            {
+                clockView.draw_info_page("HomeAssistant", "TODO", "Sensoren");
+            }
         }
-        else if (demo_index == 6)
+        else
         {
-            // Image data is in r8, g8, b8 format
-            pixelFill.fill();
-            update(&pixelFill);
-        }
-        else if (demo_index == 7)
-        {
-            greyScaleStripes.drawStripes();
-            update(&greyScaleStripes);
+            if (view != last_view)
+            {
+                clockView.draw_info_page("NINA", "TODO", "Warnungen");
+            }
         }
 
-        // matrix panel brightness will vary when you uncomment the following api call
-        // setIntensity(intensity);
+        last_view = view;
+        update(&clockView);
+#endif
 
-        // Update intensity for next loop
-        intensity += step;
-        if (intensity >= 1.0f)
-        {
-            step = -step;
-        }
-        else if (intensity <= 0.0f)
-        {
-            step = -step;
-        }
-
-        sleep_ms(ms); // hz updates per second - the HUB75 driver is running independently usually with far more than 200Hz (see README.md)
+        sleep_ms(ms);
     }
 }

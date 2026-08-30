@@ -39,9 +39,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.ccache
-          key: ${{ runner.os }}-ccache-pico2-${{ hashFiles('CMakeLists.txt', 'common/CMakeLists.txt', 'libraries/CMakeLists.txt', 'src/**', 'examples/**', 'common/**', 'libraries/**') }}
+          key: ${{ runner.os }}-ccache-pico2w-${{ hashFiles('CMakeLists.txt', 'common/CMakeLists.txt', 'libraries/CMakeLists.txt', 'src/**', 'examples/**', 'common/**', 'libraries/**', 'hub75_demo.cpp') }}
           restore-keys: |
-            ${{ runner.os }}-ccache-pico2-
+            ${{ runner.os }}-ccache-pico2w-
 
       - name: Checkout Pico SDK (with submodules)
         if: steps.cache-pico-sdk.outputs.cache-hit != 'true'
@@ -53,12 +53,19 @@ jobs:
           CCACHE_DIR: ~/.ccache
           CCACHE_BASEDIR: ${{ github.workspace }}
           CCACHE_COMPILERCHECK: content
+          WIFI_SSID: ${{ secrets.WIFI_SSID }}
+          WIFI_PASSWORD: ${{ secrets.WIFI_PASSWORD }}
+          NTP_SERVER: ${{ vars.NTP_SERVER }}
         run: |
+          NTP_SERVER_VALUE="${NTP_SERVER:-fritz.box}"
           cmake -S . -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DPICO_BOARD=pico2 \
+            -DPICO_BOARD=pico2_w \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DWIFI_SSID="$WIFI_SSID" \
+            -DWIFI_PASSWORD="$WIFI_PASSWORD" \
+            -DNTP_SERVER="$NTP_SERVER_VALUE" \
             -DPICO_SDK_PATH="$GITHUB_WORKSPACE/.pico-sdk"
 
       - name: Build
@@ -70,7 +77,7 @@ jobs:
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: hub75-pico2
+          name: hub75-pico2w
           path: |
             build-ci/*.uf2
             build-ci/*.elf

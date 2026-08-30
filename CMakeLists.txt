@@ -25,7 +25,7 @@ endif()
 # ====================================================================================
 # As far as I know the Raspberry Pi Pico plugin for VSCode does not (yet) support bare RP2350 microcontrollers without a board.
 # To adapt the C-SDK for a standard Pico board configure this CMakeLists.txt file via the Raspberry Pi Pico plugin's "Switch Board" option.
-set(PICO_BOARD pico CACHE STRING "Board type")
+set(PICO_BOARD pico2_w CACHE STRING "Board type")
 
 # Uncomment the following two lines to compile for bare RP2350 without a board
 # set(PICO_PLATFORM rp2350)
@@ -144,6 +144,16 @@ target_compile_definitions(hub75 PRIVATE
     FRAME_RATE=false            # for testing and debugging purpose only: output frame rate information (printf) in monitor - set to `false` for production
 )
 
+set(WIFI_SSID "" CACHE STRING "Wi-Fi SSID for Pico W clock app")
+set(WIFI_PASSWORD "" CACHE STRING "Wi-Fi password for Pico W clock app")
+set(NTP_SERVER "fritz.box" CACHE STRING "NTP server hostname, e.g. fritz.box or pool.ntp.org")
+
+target_compile_definitions(hub75 PRIVATE
+    WIFI_SSID="${WIFI_SSID}"
+    WIFI_PASSWORD="${WIFI_PASSWORD}"
+    NTP_SERVER="${NTP_SERVER}"
+)
+
 target_compile_definitions(hub75 PRIVATE ${PANEL_DEFINE_VALUE})
 
 # Generate PIO header
@@ -158,16 +168,8 @@ add_subdirectory(libraries)
 
 target_sources(hub75 PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/src/hub75.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/examples/bouncing_balls.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/examples/antialiased_line.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/examples/fire_effect.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/examples/rotator.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/examples/analog_clock.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/examples/pixel_fill.hpp
-        ${CMAKE_CURRENT_LIST_DIR}/examples/grey_scale_stripes.hpp
         ${CMAKE_CURRENT_LIST_DIR}/src/rul6024.cpp
         ${CMAKE_CURRENT_LIST_DIR}/src/fm6126a.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/examples/hue_value_spectrum.hpp
         ${CMAKE_CURRENT_LIST_DIR}/hub75_demo.cpp
         )
 
@@ -182,8 +184,14 @@ target_link_libraries(hub75
         pico_graphics)
 
 if(PICO_CYW43_SUPPORTED)
-    target_link_libraries(hub75
-                          pico_cyw43_arch_none)
+    if(TARGET pico_cyw43_arch_lwip_threadsafe_background AND TARGET pico_lwip AND TARGET pico_lwip_sntp)
+        target_link_libraries(hub75
+                              pico_cyw43_arch_lwip_threadsafe_background
+                              pico_lwip
+                              pico_lwip_sntp)
+    else()
+        message(WARNING "Pico W wireless libs not available in SDK. Run 'git submodule update --init --recursive' in your pico-sdk checkout to enable Wi-Fi/NTP.")
+    endif()
 endif()
 
 # Add the standard include files to the build
