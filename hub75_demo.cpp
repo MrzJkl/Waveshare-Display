@@ -17,6 +17,7 @@
 #include "hardware/clocks.h"
 
 #include "hub75.hpp"
+#include "app_config.h"
 
 #if HUB75_MULTICORE == true
 #include "pico/multicore.h"

@@ -148,12 +148,24 @@ set(WIFI_SSID "" CACHE STRING "Wi-Fi SSID for Pico W clock app")
 set(WIFI_PASSWORD "" CACHE STRING "Wi-Fi password for Pico W clock app")
 set(NTP_SERVER "fritz.box" CACHE STRING "NTP server hostname, e.g. fritz.box or pool.ntp.org")
 set(WIFI_COUNTRY_CODE "CYW43_COUNTRY_GERMANY" CACHE STRING "CYW43 country macro, e.g. CYW43_COUNTRY_GERMANY")
+set(WIFI_AUTH_MODE "CYW43_AUTH_WPA2_AES_PSK" CACHE STRING "Default Wi-Fi auth mode macro")
+
+string(REPLACE "\\" "\\\\" WIFI_SSID_ESCAPED "${WIFI_SSID}")
+string(REPLACE "\"" "\\\"" WIFI_SSID_ESCAPED "${WIFI_SSID_ESCAPED}")
+string(REPLACE "\\" "\\\\" WIFI_PASSWORD_ESCAPED "${WIFI_PASSWORD}")
+string(REPLACE "\"" "\\\"" WIFI_PASSWORD_ESCAPED "${WIFI_PASSWORD_ESCAPED}")
+string(REPLACE "\\" "\\\\" NTP_SERVER_ESCAPED "${NTP_SERVER}")
+string(REPLACE "\"" "\\\"" NTP_SERVER_ESCAPED "${NTP_SERVER_ESCAPED}")
+
+configure_file(
+    ${CMAKE_CURRENT_LIST_DIR}/app_config.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/app_config.h
+    @ONLY
+)
 
 target_compile_definitions(hub75 PRIVATE
-    WIFI_SSID="${WIFI_SSID}"
-    WIFI_PASSWORD="${WIFI_PASSWORD}"
-    NTP_SERVER="${NTP_SERVER}"
     PICO_CYW43_ARCH_DEFAULT_COUNTRY_CODE=${WIFI_COUNTRY_CODE}
+    WIFI_AUTH=${WIFI_AUTH_MODE}
 )
 
 target_compile_definitions(hub75 PRIVATE ${PANEL_DEFINE_VALUE})
@@ -198,6 +210,7 @@ endif()
 
 # Add the standard include files to the build
 target_include_directories(hub75 PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/src
         ${CMAKE_CURRENT_LIST_DIR}/examples
         ${CMAKE_CURRENT_LIST_DIR}
