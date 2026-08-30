@@ -256,15 +256,34 @@ static int connect_wifi()
            (unsigned)std::strlen(WIFI_SSID),
            (unsigned)std::strlen(WIFI_PASSWORD));
 
-    int rc = cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, WIFI_AUTH, 30000);
-    if (rc != 0)
+    struct AuthTry
     {
-        printf("Wi-Fi connect failed: %d\n", rc);
-        return rc;
+        uint32_t auth;
+        const char *name;
+    };
+
+    const AuthTry auth_tries[] = {
+        {WIFI_AUTH, "configured"},
+        {CYW43_AUTH_WPA2_MIXED_PSK, "wpa2-mixed"},
+        {CYW43_AUTH_WPA2_AES_PSK, "wpa2-aes"},
+        {CYW43_AUTH_WPA_TKIP_PSK, "wpa-tkip"},
+    };
+
+    int rc = -1000;
+    for (const auto &attempt : auth_tries)
+    {
+        printf("Wi-Fi auth try: %s\n", attempt.name);
+        rc = cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, attempt.auth, 20000);
+        if (rc == 0)
+        {
+            printf("Wi-Fi connected (%s).\n", attempt.name);
+            return 0;
+        }
+        printf("Wi-Fi connect failed (%s): %d\n", attempt.name, rc);
+        sleep_ms(300);
     }
 
-    printf("Wi-Fi connected.\n");
-    return 0;
+    return rc;
 }
 
 static void start_sntp()

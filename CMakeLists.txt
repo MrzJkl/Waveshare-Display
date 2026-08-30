@@ -147,11 +147,13 @@ target_compile_definitions(hub75 PRIVATE
 set(WIFI_SSID "" CACHE STRING "Wi-Fi SSID for Pico W clock app")
 set(WIFI_PASSWORD "" CACHE STRING "Wi-Fi password for Pico W clock app")
 set(NTP_SERVER "fritz.box" CACHE STRING "NTP server hostname, e.g. fritz.box or pool.ntp.org")
+set(WIFI_COUNTRY_CODE "CYW43_COUNTRY_GERMANY" CACHE STRING "CYW43 country macro, e.g. CYW43_COUNTRY_GERMANY")
 
 target_compile_definitions(hub75 PRIVATE
     WIFI_SSID="${WIFI_SSID}"
     WIFI_PASSWORD="${WIFI_PASSWORD}"
     NTP_SERVER="${NTP_SERVER}"
+    PICO_CYW43_ARCH_DEFAULT_COUNTRY_CODE=${WIFI_COUNTRY_CODE}
 )
 
 target_compile_definitions(hub75 PRIVATE ${PANEL_DEFINE_VALUE})
