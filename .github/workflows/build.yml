@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Install build dependencies
         run: |
@@ -30,13 +30,13 @@ jobs:
 
       - name: Cache Pico SDK
         id: cache-pico-sdk
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .pico-sdk
           key: ${{ runner.os }}-pico-sdk-2.2.0
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.ccache
           key: ${{ runner.os }}-ccache-pico2-${{ hashFiles('CMakeLists.txt', 'common/CMakeLists.txt', 'libraries/CMakeLists.txt', 'src/**', 'examples/**', 'common/**', 'libraries/**') }}
@@ -68,7 +68,7 @@ jobs:
         run: ccache --show-stats
 
       - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hub75-pico2
           path: |
