@@ -48,6 +48,7 @@ using namespace pimoroni;
 
 constexpr time_t MIN_VALID_UNIX_TIME = 1700000000;
 constexpr uint32_t VIEW_SWITCH_MS = 10000;
+constexpr bool ENABLE_VIEW_ROTATION = false;
 
 enum class ViewId : uint8_t
 {
@@ -62,6 +63,7 @@ struct AppState
 {
     bool wifi_supported = HUB75_HAS_WIFI;
     bool wifi_connected = false;
+    int wifi_error = 0;
     bool time_synced = false;
     time_t now = 0;
 };
@@ -128,17 +130,20 @@ public:
         bg = create_pen(0, 0, 0);
         fg = create_pen(235, 244, 255);
         accent = create_pen(120, 220, 160);
-        set_font(&font14_outline);
+        set_font(&font8);
     }
 
     void draw_waiting(const char *msg)
     {
+        char short_msg[13];
+        std::snprintf(short_msg, sizeof(short_msg), "%.12s", msg);
+
         set_pen(bg);
         clear();
         set_pen(fg);
-        text("WiFi/NTP", Point(2, 1), false, 0.5f, 0.0f, false);
+        text("WiFi/NTP", Point(2, 1), false, 0.7f, 0.0f, false);
         set_pen(accent);
-        text(msg, Point(2, DISPLAY_HEIGHT > 20 ? DISPLAY_HEIGHT - 9 : 9), false, 0.5f, 0.0f, false);
+        text(short_msg, Point(2, DISPLAY_HEIGHT > 20 ? DISPLAY_HEIGHT - 9 : 9), false, 0.7f, 0.0f, false);
     }
 
     void draw_time(time_t now)
@@ -164,10 +169,10 @@ public:
         clear();
 
         set_pen(fg);
-        text(line, Point(2, 4), false, 0.9f, 0.0f, false);
+        text(line, Point(2, 3), false, 1.3f, 0.0f, false);
 
         set_pen(accent);
-        text(sec, Point(DISPLAY_WIDTH - 14, DISPLAY_HEIGHT - 9), false, 0.5f, 0.0f, false);
+        text(sec, Point(DISPLAY_WIDTH - 12, DISPLAY_HEIGHT - 8), false, 0.7f, 0.0f, false);
     }
 
     void draw_info_page(const char *title, const char *line1, const char *line2)
@@ -176,11 +181,11 @@ public:
         clear();
 
         set_pen(fg);
-        text(title, Point(2, 1), false, 0.6f, 0.0f, false);
+        text(title, Point(2, 1), false, 0.7f, 0.0f, false);
 
         set_pen(accent);
-        text(line1, Point(2, DISPLAY_HEIGHT > 20 ? 13 : 9), false, 0.5f, 0.0f, false);
-        text(line2, Point(2, DISPLAY_HEIGHT > 20 ? 22 : 15), false, 0.5f, 0.0f, false);
+        text(line1, Point(2, DISPLAY_HEIGHT > 20 ? 12 : 9), false, 0.7f, 0.0f, false);
+        text(line2, Point(2, DISPLAY_HEIGHT > 20 ? 21 : 15), false, 0.7f, 0.0f, false);
     }
 };
 #endif
@@ -225,26 +230,28 @@ void initialize()
 }
 
 #if HUB75_HAS_WIFI
-static bool connect_wifi()
+static int connect_wifi()
 {
     if (std::strlen(WIFI_SSID) == 0u || std::strlen(WIFI_PASSWORD) == 0u)
     {
-        printf("WIFI_SSID / WIFI_PASSWORD missing. Configure via CMake cache.\n");
-        return false;
+        printf("WIFI creds missing (WIFI_SSID / WIFI_PASSWORD).\n");
+        return -100;
     }
 
     cyw43_arch_enable_sta_mode();
-    printf("Connecting to Wi-Fi SSID '%s'...\n", WIFI_SSID);
+    printf("Connecting to Wi-Fi (ssid-len=%u, pass-len=%u)...\n",
+           (unsigned)std::strlen(WIFI_SSID),
+           (unsigned)std::strlen(WIFI_PASSWORD));
 
     int rc = cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, WIFI_AUTH, 30000);
     if (rc != 0)
     {
         printf("Wi-Fi connect failed: %d\n", rc);
-        return false;
+        return rc;
     }
 
     printf("Wi-Fi connected.\n");
-    return true;
+    return 0;
 }
 
 static void start_sntp()
@@ -301,16 +308,27 @@ int main()
     tzset();
 
 #if USE_PICO_GRAPHICS == true
-    clockView.draw_waiting("Connecting...");
+    clockView.draw_waiting("Connecting");
     update(&clockView);
 #endif
 
-    bool wifi_ok = connect_wifi();
+    int wifi_rc = connect_wifi();
+    bool wifi_ok = wifi_rc == 0;
+    app.wifi_error = wifi_rc;
     app.wifi_connected = wifi_ok;
     if (wifi_ok)
     {
         start_sntp();
     }
+#if USE_PICO_GRAPHICS == true
+    else
+    {
+        char wifi_msg[13];
+        std::snprintf(wifi_msg, sizeof(wifi_msg), "WIFI E%d", app.wifi_error);
+        clockView.draw_waiting(wifi_msg);
+        update(&clockView);
+    }
+#endif
 #else
     printf("Wi-Fi support unavailable in this SDK build; showing fallback clock.\n");
 #endif
@@ -320,7 +338,11 @@ int main()
     while (true)
     {
         const uint32_t now_ms = to_ms_since_boot(get_absolute_time());
-        const ViewId view = static_cast<ViewId>((now_ms / VIEW_SWITCH_MS) % static_cast<uint32_t>(ViewId::Count));
+        ViewId view = ViewId::Clock;
+        if (ENABLE_VIEW_ROTATION)
+        {
+            view = static_cast<ViewId>((now_ms / VIEW_SWITCH_MS) % static_cast<uint32_t>(ViewId::Count));
+        }
 
 #if USE_PICO_GRAPHICS == true
 #if HUB75_HAS_WIFI
@@ -329,7 +351,16 @@ int main()
 
         if (!app.time_synced)
         {
-            clockView.draw_waiting("Syncing NTP...");
+            if (app.wifi_connected)
+            {
+                clockView.draw_waiting("Syncing NTP");
+            }
+            else
+            {
+                char wifi_msg[13];
+                std::snprintf(wifi_msg, sizeof(wifi_msg), "WIFI E%d", app.wifi_error);
+                clockView.draw_waiting(wifi_msg);
+            }
             if (wait_for_time_sync(200))
             {
                 app.now = time(nullptr);
@@ -349,7 +380,16 @@ int main()
             }
             else
             {
-                clockView.draw_waiting("No time yet");
+                if (app.wifi_connected)
+                {
+                    clockView.draw_waiting("Syncing NTP");
+                }
+                else
+                {
+                    char wifi_msg[13];
+                    std::snprintf(wifi_msg, sizeof(wifi_msg), "WIFI E%d", app.wifi_error);
+                    clockView.draw_waiting(wifi_msg);
+                }
             }
         }
         else if (view == ViewId::Weather)
