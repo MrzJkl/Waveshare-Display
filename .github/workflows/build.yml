@@ -53,7 +53,7 @@ jobs:
           CCACHE_DIR: ~/.ccache
           CCACHE_BASEDIR: ${{ github.workspace }}
           CCACHE_COMPILERCHECK: content
-          WIFI_SSID: ${{ secrets.WIFI_SSID }}
+          WIFI_SSID: ${{ vars.WIFI_SSID }}
           WIFI_PASSWORD: ${{ secrets.WIFI_PASSWORD }}
           NTP_SERVER: ${{ vars.NTP_SERVER }}
         run: |
