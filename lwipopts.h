@@ -23,5 +23,7 @@
 
 // Enable SNTP client used by the clock app.
 #define LWIP_SNTP                  1
+#define SNTP_SERVER_DNS            1
+#define SNTP_MAX_SERVERS           1
 
 #endif

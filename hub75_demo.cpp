@@ -250,7 +250,11 @@ static bool connect_wifi()
 static void start_sntp()
 {
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
+#if defined(SNTP_SERVER_DNS) && (SNTP_SERVER_DNS)
     sntp_setservername(0, NTP_SERVER);
+#else
+    printf("SNTP hostname DNS support is disabled in lwipopts.h\n");
+#endif
     sntp_init();
     printf("SNTP started, server: %s\n", NTP_SERVER);
 }
