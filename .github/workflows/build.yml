@@ -58,6 +58,11 @@ jobs:
           NTP_SERVER: ${{ vars.NTP_SERVER }}
         run: |
           NTP_SERVER_VALUE="${NTP_SERVER:-fritz.box}"
+          SSID_VALUE="${WIFI_SSID:-<unset>}"
+          SSID_LEN="${#WIFI_SSID}"
+          echo "CI config: WIFI_SSID=${SSID_VALUE}"
+          echo "CI config: WIFI_SSID length=${SSID_LEN}"
+          echo "CI config: NTP_SERVER=${NTP_SERVER_VALUE}"
           cmake -S . -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DPICO_BOARD=pico2_w \

@@ -26,6 +26,9 @@
 using namespace pimoroni;
 #endif
 
+static_assert(DISPLAY_WIDTH == 64 && DISPLAY_HEIGHT == 32,
+              "This application is configured for a fixed 64x32 panel.");
+
 #ifndef WIFI_SSID
 #define WIFI_SSID ""
 #endif
@@ -67,6 +70,16 @@ struct AppState
     bool time_synced = false;
     time_t now = 0;
 };
+
+static void format_wifi_error_text(char *out, size_t out_size, int wifi_error)
+{
+    int code = wifi_error;
+    if (code < 0)
+    {
+        code = -code;
+    }
+    std::snprintf(out, out_size, "E%03d", code);
+}
 
 // Perform initialisation
 int pico_led_init(void)
@@ -143,7 +156,7 @@ public:
         set_pen(fg);
         text("WiFi/NTP", Point(2, 1), false, 0.7f, 0.0f, false);
         set_pen(accent);
-        text(short_msg, Point(2, DISPLAY_HEIGHT > 20 ? DISPLAY_HEIGHT - 9 : 9), false, 0.7f, 0.0f, false);
+        text(short_msg, Point(2, 21), false, 0.7f, 0.0f, false);
     }
 
     void draw_time(time_t now)
@@ -184,8 +197,8 @@ public:
         text(title, Point(2, 1), false, 0.7f, 0.0f, false);
 
         set_pen(accent);
-        text(line1, Point(2, DISPLAY_HEIGHT > 20 ? 12 : 9), false, 0.7f, 0.0f, false);
-        text(line2, Point(2, DISPLAY_HEIGHT > 20 ? 21 : 15), false, 0.7f, 0.0f, false);
+        text(line1, Point(2, 12), false, 0.7f, 0.0f, false);
+        text(line2, Point(2, 21), false, 0.7f, 0.0f, false);
     }
 };
 #endif
@@ -324,7 +337,7 @@ int main()
     else
     {
         char wifi_msg[13];
-        std::snprintf(wifi_msg, sizeof(wifi_msg), "WIFI E%d", app.wifi_error);
+        format_wifi_error_text(wifi_msg, sizeof(wifi_msg), app.wifi_error);
         clockView.draw_waiting(wifi_msg);
         update(&clockView);
     }
@@ -358,7 +371,7 @@ int main()
             else
             {
                 char wifi_msg[13];
-                std::snprintf(wifi_msg, sizeof(wifi_msg), "WIFI E%d", app.wifi_error);
+                format_wifi_error_text(wifi_msg, sizeof(wifi_msg), app.wifi_error);
                 clockView.draw_waiting(wifi_msg);
             }
             if (wait_for_time_sync(200))
@@ -387,7 +400,7 @@ int main()
                 else
                 {
                     char wifi_msg[13];
-                    std::snprintf(wifi_msg, sizeof(wifi_msg), "WIFI E%d", app.wifi_error);
+                    format_wifi_error_text(wifi_msg, sizeof(wifi_msg), app.wifi_error);
                     clockView.draw_waiting(wifi_msg);
                 }
             }
