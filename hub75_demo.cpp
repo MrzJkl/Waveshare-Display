@@ -68,6 +68,7 @@ struct AppState
     bool wifi_supported = HUB75_HAS_WIFI;
     bool wifi_connected = false;
     int wifi_error = 0;
+    bool ssid_found = false;
     bool time_synced = false;
     time_t now = 0;
 };
@@ -244,6 +245,71 @@ void initialize()
 }
 
 #if HUB75_HAS_WIFI
+struct WifiScanContext
+{
+    const char *target_ssid;
+    size_t target_len;
+    bool found;
+    int16_t best_rssi;
+};
+
+static int wifi_scan_result_cb(void *env, const cyw43_ev_scan_result_t *result)
+{
+    auto *ctx = static_cast<WifiScanContext *>(env);
+    if (!ctx || !result)
+    {
+        return 0;
+    }
+
+    if (result->ssid_len == ctx->target_len && std::memcmp(result->ssid, ctx->target_ssid, ctx->target_len) == 0)
+    {
+        ctx->found = true;
+        if (result->rssi > ctx->best_rssi)
+        {
+            ctx->best_rssi = result->rssi;
+        }
+    }
+    return 0;
+}
+
+static bool is_target_ssid_visible()
+{
+    WifiScanContext ctx{};
+    ctx.target_ssid = WIFI_SSID;
+    ctx.target_len = std::strlen(WIFI_SSID);
+    ctx.found = false;
+    ctx.best_rssi = -32768;
+
+    cyw43_wifi_scan_options_t scan_options{};
+    int scan_rc = cyw43_wifi_scan(&cyw43_state, &scan_options, &ctx, wifi_scan_result_cb);
+    if (scan_rc != 0)
+    {
+        printf("Wi-Fi scan start failed: %d\n", scan_rc);
+        return false;
+    }
+
+    absolute_time_t deadline = make_timeout_time_ms(12000);
+    while (cyw43_wifi_scan_active(&cyw43_state) && !time_reached(deadline))
+    {
+        sleep_ms(50);
+    }
+
+    if (cyw43_wifi_scan_active(&cyw43_state))
+    {
+        printf("Wi-Fi scan timed out\n");
+        return false;
+    }
+
+    printf("Wi-Fi scan result for target SSID: %s", ctx.found ? "found" : "not found");
+    if (ctx.found)
+    {
+        printf(" (best RSSI %d dBm)", (int)ctx.best_rssi);
+    }
+    printf("\n");
+
+    return ctx.found;
+}
+
 static int connect_wifi()
 {
     if (std::strlen(WIFI_SSID) == 0u || std::strlen(WIFI_PASSWORD) == 0u)
@@ -341,20 +407,40 @@ int main()
     tzset();
 
 #if USE_PICO_GRAPHICS == true
-    clockView.draw_waiting("Connecting");
+    clockView.draw_waiting("SSID SCAN");
     update(&clockView);
 #endif
 
-    int wifi_rc = connect_wifi();
-    bool wifi_ok = wifi_rc == 0;
-    app.wifi_error = wifi_rc;
-    app.wifi_connected = wifi_ok;
-    if (wifi_ok)
+    app.ssid_found = is_target_ssid_visible();
+
+#if USE_PICO_GRAPHICS == true
+    clockView.draw_waiting(app.ssid_found ? "SSID OK" : "SSID MISS");
+    update(&clockView);
+#endif
+
+    if (!app.ssid_found)
     {
-        start_sntp();
+        app.wifi_error = -102;
+        app.wifi_connected = false;
+    }
+    else
+    {
+#if USE_PICO_GRAPHICS == true
+        clockView.draw_waiting("Connecting");
+        update(&clockView);
+#endif
+
+        int wifi_rc = connect_wifi();
+        bool wifi_ok = wifi_rc == 0;
+        app.wifi_error = wifi_rc;
+        app.wifi_connected = wifi_ok;
+        if (wifi_ok)
+        {
+            start_sntp();
+        }
     }
 #if USE_PICO_GRAPHICS == true
-    else
+    if (!app.wifi_connected)
     {
         char wifi_msg[13];
         format_wifi_error_text(wifi_msg, sizeof(wifi_msg), app.wifi_error);
