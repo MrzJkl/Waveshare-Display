@@ -1,0 +1,42 @@
+# Local editor settings
+.vscode/
+
+# CMake / Ninja build trees (out-of-source)
+build/
+build-*/
+cmake-build-*/
+
+# If an in-source build happens by accident
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+build.ninja
+.ninja_deps
+.ninja_log
+Testing/
+
+# Generated Pico artifacts
+*.uf2
+*.elf
+*.bin
+*.hex
+*.map
+*.dis
+*.pio.h
+
+# Generic compiler/linker outputs
+*.d
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.app
+
+# OS/tool noise
+.DS_Store
+Thumbs.db
