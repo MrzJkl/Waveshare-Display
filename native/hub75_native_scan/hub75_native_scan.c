@@ -5,7 +5,10 @@
 #include "py/runtime.h"
 #include "py/mphal.h"
 
+#include "hardware/dma.h"
 #include "hardware/gpio.h"
+#include "hardware/pio.h"
+#include "hardware/pio_instructions.h"
 #include "hardware/structs/sio.h"
 #include "hardware/timer.h"
 
@@ -18,11 +21,8 @@ typedef struct {
     uint32_t data_setup_nops;
     uint32_t clk_high_nops;
     uint32_t lat_high_nops;
+    uint32_t data_shift;
 
-    uint32_t top_rgb_mask;
-    uint32_t bot_rgb_mask;
-    uint32_t rgb_mask;
-    uint32_t clk_mask;
     uint32_t lat_mask;
     uint32_t oe_mask;
 
@@ -32,11 +32,46 @@ typedef struct {
     size_t words_len;
     uint32_t *front_words;
     uint32_t *back_words;
+
+    PIO pio;
+    int sm;
+    uint prog_offs;
+    int dma_chan;
+    dma_channel_config dma_cfg;
+    bool pio_ready;
+    bool dma_ready;
 } hub75_scan_state_t;
 
 static hub75_scan_state_t g_state = {0};
 
+// Two-instruction loop:
+// 1) output 6 RGB bits with CLK low
+// 2) pulse CLK high
+static uint16_t hub75_shift_program_instructions[2];
+
+static const pio_program_t hub75_shift_program = {
+    .instructions = hub75_shift_program_instructions,
+    .length = 2,
+    .origin = -1,
+};
+
+static void hub75_prepare_shift_program(void) {
+    hub75_shift_program_instructions[0] = pio_encode_out(pio_pins, 6) | pio_encode_sideset(1, 0);
+    hub75_shift_program_instructions[1] = pio_encode_nop() | pio_encode_sideset(1, 1);
+}
+
 static void hub75_release_state(void) {
+    if (g_state.dma_ready) {
+        dma_channel_abort((uint)g_state.dma_chan);
+        dma_channel_unclaim((uint)g_state.dma_chan);
+    }
+
+    if (g_state.pio_ready) {
+        pio_sm_set_enabled(g_state.pio, (uint)g_state.sm, false);
+        pio_sm_unclaim(g_state.pio, (uint)g_state.sm);
+        pio_remove_program(g_state.pio, &hub75_shift_program, g_state.prog_offs);
+    }
+
     if (g_state.row_masks != NULL) {
         m_del(uint32_t, g_state.row_masks, g_state.scan_rows);
     }
@@ -71,12 +106,88 @@ static inline void hub75_delay_nops(uint32_t nops) {
     }
 }
 
+static bool hub75_try_setup_pio(PIO pio, uint32_t data_base_pin, uint32_t clk_pin, float clkdiv) {
+    hub75_prepare_shift_program();
+
+    if (!pio_can_add_program(pio, &hub75_shift_program)) {
+        return false;
+    }
+
+    int sm = pio_claim_unused_sm(pio, false);
+    if (sm < 0) {
+        return false;
+    }
+
+    uint prog_offs = pio_add_program(pio, &hub75_shift_program);
+
+    for (uint32_t i = 0; i < 6; i++) {
+        pio_gpio_init(pio, data_base_pin + i);
+    }
+    pio_gpio_init(pio, clk_pin);
+
+    pio_sm_config cfg = pio_get_default_sm_config();
+    sm_config_set_wrap(&cfg, prog_offs, prog_offs + 1);
+    sm_config_set_out_pins(&cfg, data_base_pin, 6);
+    sm_config_set_sideset_pins(&cfg, clk_pin);
+    sm_config_set_sideset(&cfg, 1, false, false);
+    sm_config_set_out_shift(&cfg, true, true, 6);
+    sm_config_set_fifo_join(&cfg, PIO_FIFO_JOIN_TX);
+    sm_config_set_clkdiv(&cfg, clkdiv);
+
+    pio_sm_set_consecutive_pindirs(pio, (uint)sm, data_base_pin, 6, true);
+    pio_sm_set_consecutive_pindirs(pio, (uint)sm, clk_pin, 1, true);
+
+    pio_sm_init(pio, (uint)sm, prog_offs, &cfg);
+    pio_sm_set_enabled(pio, (uint)sm, true);
+
+    g_state.pio = pio;
+    g_state.sm = sm;
+    g_state.prog_offs = prog_offs;
+    g_state.pio_ready = true;
+
+    return true;
+}
+
+static void hub75_setup_dma(void) {
+    int dma_chan = dma_claim_unused_channel(false);
+    if (dma_chan < 0) {
+        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("no free DMA channel"));
+    }
+
+    dma_channel_config cfg = dma_channel_get_default_config((uint)dma_chan);
+    channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+    channel_config_set_read_increment(&cfg, true);
+    channel_config_set_write_increment(&cfg, false);
+    channel_config_set_dreq(&cfg, pio_get_dreq(g_state.pio, (uint)g_state.sm, true));
+
+    g_state.dma_chan = dma_chan;
+    g_state.dma_cfg = cfg;
+    g_state.dma_ready = true;
+}
+
+static inline void hub75_stream_row_dma(const uint32_t *row_words) {
+    dma_channel_configure(
+        (uint)g_state.dma_chan,
+        &g_state.dma_cfg,
+        &g_state.pio->txf[g_state.sm],
+        row_words,
+        g_state.width,
+        true
+    );
+
+    dma_channel_wait_for_finish_blocking((uint)g_state.dma_chan);
+
+    while (!pio_sm_is_tx_fifo_empty(g_state.pio, (uint)g_state.sm)) {
+    }
+
+    // Let the state machine flush the final pixel from OSR.
+    hub75_delay_nops(8);
+}
+
 static inline void hub75_scan_once_impl(void) {
     const uint32_t *scan_words = g_state.front_words;
     const uint32_t width = g_state.width;
     const uint32_t scan_rows = g_state.scan_rows;
-    const uint32_t rgb_mask = g_state.rgb_mask;
-    const uint32_t clk_mask = g_state.clk_mask;
     const uint32_t lat_mask = g_state.lat_mask;
     const uint32_t oe_mask = g_state.oe_mask;
     const uint32_t row_mask_all = g_state.row_mask_all;
@@ -88,15 +199,9 @@ static inline void hub75_scan_once_impl(void) {
         sio_hw->gpio_clr = row_mask_all;
         sio_hw->gpio_set = row_masks[row];
 
+        hub75_delay_nops(g_state.data_setup_nops);
         size_t row_index = (size_t)row * width;
-        for (uint32_t x = 0; x < width; x++) {
-            sio_hw->gpio_clr = rgb_mask;
-            sio_hw->gpio_set = scan_words[row_index + x];
-            hub75_delay_nops(g_state.data_setup_nops);
-            sio_hw->gpio_set = clk_mask;
-            hub75_delay_nops(g_state.clk_high_nops);
-            sio_hw->gpio_clr = clk_mask;
-        }
+        hub75_stream_row_dma(scan_words + row_index);
 
         sio_hw->gpio_set = lat_mask;
         hub75_delay_nops(g_state.lat_high_nops);
@@ -156,6 +261,13 @@ static mp_obj_t hub75_native_init(size_t n_args, const mp_obj_t *args) {
     if (row_n_pins == 0 || row_n_pins > 5) {
         mp_raise_ValueError(MP_ERROR_TEXT("row_n_pins must be 1..5"));
     }
+    if (g1_pin != r1_pin + 1 ||
+        b1_pin != r1_pin + 2 ||
+        r2_pin != r1_pin + 3 ||
+        g2_pin != r1_pin + 4 ||
+        b2_pin != r1_pin + 5) {
+        mp_raise_ValueError(MP_ERROR_TEXT("RGB pins must be contiguous"));
+    }
 
     hub75_release_state();
 
@@ -166,11 +278,8 @@ static mp_obj_t hub75_native_init(size_t n_args, const mp_obj_t *args) {
     g_state.data_setup_nops = data_setup_nops;
     g_state.clk_high_nops = clk_high_nops;
     g_state.lat_high_nops = lat_high_nops;
+    g_state.data_shift = r1_pin;
 
-    g_state.top_rgb_mask = (1u << r1_pin) | (1u << g1_pin) | (1u << b1_pin);
-    g_state.bot_rgb_mask = (1u << r2_pin) | (1u << g2_pin) | (1u << b2_pin);
-    g_state.rgb_mask = g_state.top_rgb_mask | g_state.bot_rgb_mask;
-    g_state.clk_mask = 1u << clk_pin;
     g_state.lat_mask = 1u << lat_pin;
     g_state.oe_mask = 1u << oe_pin;
 
@@ -196,18 +305,19 @@ static mp_obj_t hub75_native_init(size_t n_args, const mp_obj_t *args) {
     memset(g_state.front_words, 0, g_state.words_len * sizeof(uint32_t));
     memset(g_state.back_words, 0, g_state.words_len * sizeof(uint32_t));
 
-    hub75_config_output_pin(r1_pin, false);
-    hub75_config_output_pin(g1_pin, false);
-    hub75_config_output_pin(b1_pin, false);
-    hub75_config_output_pin(r2_pin, false);
-    hub75_config_output_pin(g2_pin, false);
-    hub75_config_output_pin(b2_pin, false);
+    // CLK pulse width in the new PIO path is controlled by state machine clock.
+    float pio_clkdiv = (float)(clk_high_nops > 0 ? clk_high_nops : 1);
+    if (!hub75_try_setup_pio(pio0, r1_pin, clk_pin, pio_clkdiv) &&
+        !hub75_try_setup_pio(pio1, r1_pin, clk_pin, pio_clkdiv)) {
+        hub75_release_state();
+        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("PIO setup failed"));
+    }
+
+    hub75_setup_dma();
 
     for (uint32_t i = 0; i < row_n_pins; i++) {
         hub75_config_output_pin(row_base_pin + i, false);
     }
-
-    hub75_config_output_pin(clk_pin, false);
     hub75_config_output_pin(lat_pin, false);
     hub75_config_output_pin(oe_pin, true);
 
@@ -228,7 +338,14 @@ static mp_obj_t hub75_native_swap_scan_words(mp_obj_t words_obj) {
         mp_raise_ValueError(MP_ERROR_TEXT("scan_words buffer size mismatch"));
     }
 
-    memcpy(g_state.back_words, bufinfo.buf, expected);
+    const uint32_t *src = (const uint32_t *)bufinfo.buf;
+    uint32_t *dst = g_state.back_words;
+    uint32_t shift = g_state.data_shift;
+
+    for (size_t i = 0; i < g_state.words_len; i++) {
+        // Convert absolute GPIO bitmasks to packed 6-bit RGB words for PIO OUT.
+        dst[i] = (src[i] >> shift) & 0x3fu;
+    }
 
     uint32_t *tmp = g_state.front_words;
     g_state.front_words = g_state.back_words;
@@ -288,6 +405,11 @@ static mp_obj_t hub75_native_set_pulse_nops(mp_obj_t data_setup_obj, mp_obj_t cl
     g_state.data_setup_nops = (uint32_t)data_setup;
     g_state.clk_high_nops = (uint32_t)clk_high;
     g_state.lat_high_nops = (uint32_t)lat_high;
+
+    if (g_state.pio_ready) {
+        float pio_clkdiv = (float)(g_state.clk_high_nops > 0 ? g_state.clk_high_nops : 1);
+        pio_sm_set_clkdiv(g_state.pio, (uint)g_state.sm, pio_clkdiv);
+    }
 
     return mp_const_none;
 }

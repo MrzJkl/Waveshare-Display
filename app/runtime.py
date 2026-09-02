@@ -84,6 +84,9 @@ def _run(status_led):
     next_service = ticks_ms()
     last_second = -1
     last_text = ""
+    last_provider_revision = -1
+    last_module_name = ""
+    last_clock_minute = -1
     force_redraw = True
 
     while True:
@@ -98,13 +101,38 @@ def _run(status_led):
         providers.service(now_ticks, boot)
         module_changed = rotator.service(now_ticks, providers, boot)
 
-        now = time.localtime()
-        sec = now[5]
+        sec = (now_ticks // 1000) & 0x3FFFFFFF
         if sec != last_second:
             boot.update_status_led(sec)
             last_second = sec
 
         module = rotator.current(providers, boot)
+        module_name = getattr(module, "name", "")
+        provider_changed = providers.revision != last_provider_revision
+
+        minute_changed = False
+        if module_name == "clock":
+            try:
+                current_minute = time.time() // 60
+            except Exception:
+                current_minute = last_clock_minute
+            minute_changed = current_minute != last_clock_minute
+        else:
+            current_minute = last_clock_minute
+
+        need_render = (
+            force_redraw
+            or rtc_changed
+            or module_changed
+            or provider_changed
+            or (module_name != last_module_name)
+            or minute_changed
+        )
+
+        if not need_render:
+            continue
+
+        now = time.localtime()
         text = module.render(now, providers, boot)
         if not text:
             text = "--:--"
@@ -113,6 +141,11 @@ def _run(status_led):
             display.show_text(text)
             last_text = text
             force_redraw = False
+
+        if module_name == "clock":
+            last_clock_minute = current_minute
+        last_provider_revision = providers.revision
+        last_module_name = module_name
 
 
 def run():

@@ -32,19 +32,19 @@ README.md
 ## Zweck der Dateien
 
 - [main.py](main.py): schlanker Entrypoint.
-- [app/display.py](app/display.py): Darstellungsebene (Font/Buffer in Python, Scan-Engine nativ in C mit Fallback).
+- [app/display.py](app/display.py): Darstellungsebene (Font/Buffer in Python, Scan-Engine nativ via PIO+DMA mit Fallback).
 - [app/boot.py](app/boot.py): Boot-/Infrastruktur-Ebene (WLAN + NTP + Status-LED).
 - [app/data.py](app/data.py): Datenbeschaffungsebene (derzeit Platzhalter, spaeter Sensoren/APIs).
 - [app/modules](app/modules): rotierende Anzeige-Module (Clock, Temperatur, HomeAssistant).
 - [app/runtime.py](app/runtime.py): Orchestrierung und Modulrotation.
-- [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul fuer die HUB75 Scan-Engine mit Swap-API.
+- [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul fuer die HUB75 Scan-Engine (PIO+DMA) mit Swap-API.
 - [manifest.py](manifest.py): Frozen-Manifest fuer den Build.
 - [tools/generate_wifi_config.sh](tools/generate_wifi_config.sh): erzeugt lokale [wifi_config.py](wifi_config.py) aus Env-Variablen.
 - [wifi_config.example.py](wifi_config.example.py): Vorlage fuer lokale WLAN-Konfiguration.
 
 ## Architektur
 
-- Darstellung: Pixel/Text in Python, Scan-Timing im nativen Modul.
+- Darstellung: Pixel/Text in Python, Scan-Timing im nativen PIO+DMA-Modul.
 - Boot/Infra: WLAN/NTP/LED, kein Zeichnen.
 - Module: liefern nur Anzeige-Text und koennen beliebig erweitert werden.
 - Runtime: rotiert Module alle paar Sekunden und aktualisiert Anzeige bei Bedarf.
