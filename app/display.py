@@ -7,6 +7,11 @@ from machine import Pin
 from app import settings
 
 try:
+    import hub75_native_scan
+except ImportError:
+    hub75_native_scan = None
+
+try:
     import micropython
 except ImportError:
     class _MicroPythonCompat:
@@ -95,9 +100,38 @@ class Hub75Display:
         self._gpio_set_addr = settings.SIO_GPIO_OUT_SET
         self._gpio_clr_addr = settings.SIO_GPIO_OUT_CLR
         self._mem32 = getattr(machine, "mem32", None)
+        self._native_scan = hub75_native_scan
+        self._use_native_scan = False
         self._use_fast_gpio = settings.USE_FAST_GPIO_SCAN and self._mem32 is not None
 
+        if settings.USE_NATIVE_SCAN_ENGINE and self._native_scan is not None:
+            try:
+                self._native_scan.init(
+                    self.width,
+                    self.scan_rows,
+                    self.on_time_us,
+                    settings.R1_PIN,
+                    settings.G1_PIN,
+                    settings.B1_PIN,
+                    settings.R2_PIN,
+                    settings.G2_PIN,
+                    settings.B2_PIN,
+                    settings.ROWSEL_BASE_PIN,
+                    settings.ROWSEL_N_PINS,
+                    settings.CLK_PIN,
+                    settings.LAT_PIN,
+                    settings.OE_PIN,
+                    settings.NATIVE_DATA_SETUP_NOPS,
+                    settings.NATIVE_CLK_HIGH_NOPS,
+                    settings.NATIVE_LAT_HIGH_NOPS,
+                )
+                self._use_native_scan = True
+            except Exception as exc:
+                print("native scan disabled:", exc)
+                self._use_native_scan = False
+
         self._rebuild_scan_words()
+        self._publish_scan_words()
 
     def clear_frame(self, buf):
         for i in range(len(buf)):
@@ -136,6 +170,11 @@ class Hub75Display:
         self.draw_text_center(self.back_frame, text, self.text_scale)
         self.front_frame, self.back_frame = self.back_frame, self.front_frame
         self._rebuild_scan_words()
+        self._publish_scan_words()
+
+    def _publish_scan_words(self):
+        if self._use_native_scan:
+            self._native_scan.swap_scan_words(self._scan_words)
 
     @micropython.native
     def _rebuild_scan_words(self):
@@ -271,6 +310,10 @@ class Hub75Display:
 
     @micropython.native
     def scan_frame_once(self):
+        if self._use_native_scan:
+            self._native_scan.scan_once()
+            return
+
         if self._use_fast_gpio:
             self._scan_frame_once_fast()
             return
@@ -278,5 +321,9 @@ class Hub75Display:
         self._scan_frame_once_compat()
 
     def scan_batch(self, count):
+        if self._use_native_scan:
+            self._native_scan.scan_batch(count)
+            return
+
         for _ in range(count):
             self.scan_frame_once()

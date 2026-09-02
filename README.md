@@ -18,6 +18,10 @@ app/
     clock.py
     temperature.py
     homeassistant.py
+native/
+  hub75_native_scan/
+    hub75_native_scan.c
+    micropython.cmake
 tools/
   generate_wifi_config.sh
 wifi_config.example.py
@@ -28,18 +32,19 @@ README.md
 ## Zweck der Dateien
 
 - [main.py](main.py): schlanker Entrypoint.
-- [app/display.py](app/display.py): reine Darstellungsebene (HUB75 Pins, Font, Scan-Loop).
+- [app/display.py](app/display.py): Darstellungsebene (Font/Buffer in Python, Scan-Engine nativ in C mit Fallback).
 - [app/boot.py](app/boot.py): Boot-/Infrastruktur-Ebene (WLAN + NTP + Status-LED).
 - [app/data.py](app/data.py): Datenbeschaffungsebene (derzeit Platzhalter, spaeter Sensoren/APIs).
 - [app/modules](app/modules): rotierende Anzeige-Module (Clock, Temperatur, HomeAssistant).
 - [app/runtime.py](app/runtime.py): Orchestrierung und Modulrotation.
+- [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul fuer die HUB75 Scan-Engine mit Swap-API.
 - [manifest.py](manifest.py): Frozen-Manifest fuer den Build.
 - [tools/generate_wifi_config.sh](tools/generate_wifi_config.sh): erzeugt lokale [wifi_config.py](wifi_config.py) aus Env-Variablen.
 - [wifi_config.example.py](wifi_config.example.py): Vorlage fuer lokale WLAN-Konfiguration.
 
 ## Architektur
 
-- Darstellung: nur Pixel/Scan, keine Netzlogik.
+- Darstellung: Pixel/Text in Python, Scan-Timing im nativen Modul.
 - Boot/Infra: WLAN/NTP/LED, kein Zeichnen.
 - Module: liefern nur Anzeige-Text und koennen beliebig erweitert werden.
 - Runtime: rotiert Module alle paar Sekunden und aktualisiert Anzeige bei Bedarf.
@@ -61,7 +66,8 @@ WIFI_SSID='dein-ssid' WIFI_PASSWORD='dein-passwort' ./generate_wifi_config.sh
 cd /home/moritz/micropython/ports/rp2
 cmake -S . -B build-RPI_PICO2_W-min \
   -DMICROPY_BOARD=RPI_PICO2_W \
-  -DMICROPY_FROZEN_MANIFEST=/home/moritz/pico/led-display/manifest.py
+  -DMICROPY_FROZEN_MANIFEST=/home/moritz/pico/led-display/manifest.py \
+  -DUSER_C_MODULES=/home/moritz/pico/led-display/native/hub75_native_scan/micropython.cmake
 cmake --build build-RPI_PICO2_W-min -j"$(nproc)"
 ```
 
