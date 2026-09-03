@@ -1,3 +1,12 @@
+"""Rendering layer for the HUB75 panel.
+
+Python draws text into a 1 byte per pixel framebuffer and converts it into
+"scan words": one 32-bit word per (scan row, column) holding the GPIO mask of
+the RGB pins that are on (upper half via R1/G1/B1, lower half via R2/G2/B2).
+That array is handed to the native engine, which refreshes the panel by
+itself via PIO + DMA. See native/hub75_native_scan/README.md for how.
+"""
+
 import array
 
 from app import settings

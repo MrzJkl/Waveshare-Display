@@ -21,7 +21,14 @@ app/
     homeassistant.py
 native/
   hub75_native_scan/
-    hub75_native_scan.c
+    README.md
+    hub75.h
+    hub75_internal.h
+    hub75_stream.c
+    hub75_pio.c
+    hub75_dma.c
+    hub75_driver.c
+    mod_hub75_native_scan.c
     micropython.cmake
 tools/
   generate_wifi_config.sh
@@ -38,7 +45,7 @@ README.md
 - [app/data.py](app/data.py): Datenbeschaffungsebene (derzeit Platzhalter, spaeter Sensoren/APIs).
 - [app/modules](app/modules): rotierende Anzeige-Module (Clock, Temperatur, HomeAssistant).
 - [app/runtime.py](app/runtime.py): Orchestrierung und Modulrotation.
-- [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul, das das Panel komplett in Hardware (PIO + DMA) refresht.
+- [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul, das das Panel komplett in Hardware (PIO + DMA) refresht. Aufbau und Funktionsweise sind in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md) erklaert.
 - [manifest.py](manifest.py): Frozen-Manifest fuer den Build.
 - [tools/generate_wifi_config.sh](tools/generate_wifi_config.sh): erzeugt lokale [wifi_config.py](wifi_config.py) aus Env-Variablen.
 - [wifi_config.example.py](wifi_config.example.py): Vorlage fuer lokale WLAN-Konfiguration.
@@ -90,6 +97,7 @@ Grenzen: `MAX_WIDTH = 128`, `MAX_SCAN_ROWS = 32` (statische Puffer, ca. 36 KB RA
 | `NATIVE_ADDR_NS` | 200 | Settle nach Adresswechsel vor OE (`BASE_ADDR_NS`) |
 
 Bei Ghosting oder Bildfehlern zuerst `NATIVE_PIO_CLKDIV` erhoehen (z. B. 3.0), danach die ns-Werte.
+Die Herleitung der Werte und eine Symptom-Tabelle stehen in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md).
 
 ## Schnellstart
 
@@ -125,7 +133,11 @@ cp /home/moritz/micropython/ports/rp2/build-RPI_PICO2_W-min/firmware.uf2 /run/me
 
 ```bash
 mpremote exec "import hub75_native_scan as h; print(h.stats()); print(h.measure_frame_rate(500))"
+mpremote reset   # danach main.py wieder starten
 ```
+
+Achtung: `mpremote soft-reset` startet `main.py` nicht (Soft-Reset im Raw-REPL laeuft ohne
+`main.py`). Zum Neustart `mpremote reset` verwenden oder im `mpremote repl` Strg-D druecken.
 
 Hinweis: `wifi_config.py` ist absichtlich nicht versioniert.
 
