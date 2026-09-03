@@ -1,22 +1,12 @@
 # Local editor settings
 .vscode/
 
-# CMake / Ninja build trees (out-of-source)
+# External/local build folders
 build/
 build-*/
 cmake-build-*/
 
-# If an in-source build happens by accident
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-compile_commands.json
-build.ninja
-.ninja_deps
-.ninja_log
-Testing/
-
-# Generated Pico artifacts
+# Generated firmware/tool artifacts
 *.uf2
 *.elf
 *.bin
@@ -40,3 +30,10 @@ Testing/
 # OS/tool noise
 .DS_Store
 Thumbs.db
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Generated MicroPython runtime config
+wifi_config.py
