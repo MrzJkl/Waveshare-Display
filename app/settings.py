@@ -16,9 +16,23 @@ CLK_PIN = 11
 LAT_PIN = 12
 OE_PIN = 13
 
+# Leuchtdauer pro Zeile nach dem Umschalten (us). Zusaetzlich bleibt die Zeile
+# waehrend des Einschiebens der naechsten Zeile an. Bestimmt Helligkeit und
+# Bildwiederholrate: 16 Zeilen * (32 us + ~4.5 us) -> ca. 1.7 kHz.
 ON_TIME_US = 32
-SCAN_BATCH = 14
-SERVICE_INTERVAL_MS = 900
+
+# Native Scan-Engine (PIO + DMA, laeuft ohne CPU-Beteiligung).
+# Timing-Werte entsprechen dem Waveshare/JuPfu-Referenztreiber.
+NATIVE_PIO_CLKDIV = 2.0        # PIO-Takt = CPU-Takt / clkdiv (250 MHz / 2 = 125 MHz), vgl. SM_CLOCKDIV_FACTOR
+NATIVE_CLK_HALF_CYCLES = 4     # PIO-Zyklen pro CLK-Halbperiode -> Pixeltakt 125 MHz / 8 = 15.6 MHz
+NATIVE_OE_GUARD_NS = 60        # Dunkelphase vor dem Latch (BASE_OE_NS)
+NATIVE_LATCH_NS = 120          # Latch-Pulsbreite und Latch-Settle (BASE_LATCH_NS)
+NATIVE_ADDR_NS = 200           # Settle nach Zeilenadresswechsel vor OE (BASE_ADDR_NS)
+
+# Hauptschleife: das Panel refresht sich selbst, der Loop schlaeft zwischen
+# den Service-Laeufen.
+LOOP_IDLE_MS = 50
+SERVICE_INTERVAL_MS = 250
 MODULE_ROTATE_MS = 15000
 DATA_REFRESH_MS = 6000
 
@@ -29,15 +43,6 @@ NTP_TIMEOUT_S = 0.1
 
 CPU_FREQ_HZ = 250_000_000
 WLAN_PM_PERF = 0xA11140
-
-SIO_BASE = 0xD0000000
-SIO_GPIO_OUT_SET = SIO_BASE + 0x14
-SIO_GPIO_OUT_CLR = SIO_BASE + 0x18
-USE_NATIVE_SCAN_ENGINE = True
-NATIVE_DATA_SETUP_NOPS = 2
-NATIVE_CLK_HIGH_NOPS = 6
-NATIVE_LAT_HIGH_NOPS = 6
-USE_FAST_GPIO_SCAN = False
 
 TEXT_SCALE = 2
 UTC_OFFSET_HOURS = 2

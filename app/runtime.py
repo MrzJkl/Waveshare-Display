@@ -89,8 +89,13 @@ def _run(status_led):
     last_clock_minute = -1
     force_redraw = True
 
+    idle_ms = settings.LOOP_IDLE_MS
+    sleep_ms = time.sleep_ms
+
     while True:
-        display.scan_batch(settings.SCAN_BATCH)
+        # The panel refreshes itself in hardware (PIO + DMA); just idle between
+        # service runs and let WLAN/USB background work happen.
+        sleep_ms(idle_ms)
 
         now_ticks = ticks_ms()
         if ticks_diff(now_ticks, next_service) < 0:

@@ -1,8 +1,4 @@
 import array
-import time
-
-import machine
-from machine import Pin
 
 from app import settings
 
@@ -17,10 +13,6 @@ except ImportError:
     class _MicroPythonCompat:
         @staticmethod
         def native(func):
-            return func
-
-        @staticmethod
-        def viper(func):
             return func
 
     micropython = _MicroPythonCompat()
@@ -50,88 +42,65 @@ FONT_5X7 = {
 
 
 class Hub75Display:
+    """Frame rendering in Python, panel refresh in hardware.
+
+    The native module refreshes the panel autonomously via PIO + DMA. This
+    class only renders frames and hands them over; nothing here runs in the
+    display's timing path.
+    """
+
     def __init__(self):
+        if hub75_native_scan is None:
+            raise RuntimeError("hub75_native_scan module missing - build firmware with USER_C_MODULES")
+
         self.width = settings.MATRIX_WIDTH
         self.height = settings.MATRIX_HEIGHT
         self.scan_rows = settings.SCAN_ROWS
         self.text_scale = settings.TEXT_SCALE
         self.on_time_us = settings.ON_TIME_US
 
-        self.r1 = Pin(settings.R1_PIN, Pin.OUT, value=0)
-        self.g1 = Pin(settings.G1_PIN, Pin.OUT, value=0)
-        self.b1 = Pin(settings.B1_PIN, Pin.OUT, value=0)
-        self.r2 = Pin(settings.R2_PIN, Pin.OUT, value=0)
-        self.g2 = Pin(settings.G2_PIN, Pin.OUT, value=0)
-        self.b2 = Pin(settings.B2_PIN, Pin.OUT, value=0)
-
-        self.row_pins = [
-            Pin(settings.ROWSEL_BASE_PIN + i, Pin.OUT, value=0)
-            for i in range(settings.ROWSEL_N_PINS)
-        ]
-
-        self.clk = Pin(settings.CLK_PIN, Pin.OUT, value=0)
-        self.lat = Pin(settings.LAT_PIN, Pin.OUT, value=0)
-        self.oe = Pin(settings.OE_PIN, Pin.OUT, value=1)  # Active-low OE.
-
         self.front_frame = bytearray(self.width * self.height)
         self.back_frame = bytearray(self.width * self.height)
 
+        # One word per (scan row, column): absolute GPIO masks of the RGB pins
+        # that are on. This is the hand-over format for the native engine.
         self._scan_words = array.array("I", [0] * (self.width * self.scan_rows))
-
         self._top_rgb_mask = (1 << settings.R1_PIN) | (1 << settings.G1_PIN) | (1 << settings.B1_PIN)
         self._bot_rgb_mask = (1 << settings.R2_PIN) | (1 << settings.G2_PIN) | (1 << settings.B2_PIN)
-        self._rgb_mask = self._top_rgb_mask | self._bot_rgb_mask
-        self._clk_mask = 1 << settings.CLK_PIN
-        self._lat_mask = 1 << settings.LAT_PIN
-        self._oe_mask = 1 << settings.OE_PIN
 
-        self._row_mask_all = 0
-        for idx in range(settings.ROWSEL_N_PINS):
-            self._row_mask_all |= 1 << (settings.ROWSEL_BASE_PIN + idx)
+        self._native = hub75_native_scan
+        self._native.init(
+            self.width,
+            self.scan_rows,
+            settings.R1_PIN,
+            settings.G1_PIN,
+            settings.B1_PIN,
+            settings.R2_PIN,
+            settings.G2_PIN,
+            settings.B2_PIN,
+            settings.ROWSEL_BASE_PIN,
+            settings.ROWSEL_N_PINS,
+            settings.CLK_PIN,
+            settings.LAT_PIN,
+            settings.OE_PIN,
+            on_time_us=self.on_time_us,
+            pio_clkdiv=settings.NATIVE_PIO_CLKDIV,
+            clk_half_cycles=settings.NATIVE_CLK_HALF_CYCLES,
+            oe_guard_ns=settings.NATIVE_OE_GUARD_NS,
+            latch_ns=settings.NATIVE_LATCH_NS,
+            addr_ns=settings.NATIVE_ADDR_NS,
+        )
+        print("hub75 native scan:", self._native.stats())
 
-        self._row_masks = array.array("I", [0] * self.scan_rows)
-        for row in range(self.scan_rows):
-            row_mask = 0
-            for bit_idx in range(settings.ROWSEL_N_PINS):
-                if row & (1 << bit_idx):
-                    row_mask |= 1 << (settings.ROWSEL_BASE_PIN + bit_idx)
-            self._row_masks[row] = row_mask
+    def stats(self):
+        return self._native.stats()
 
-        self._gpio_set_addr = settings.SIO_GPIO_OUT_SET
-        self._gpio_clr_addr = settings.SIO_GPIO_OUT_CLR
-        self._mem32 = getattr(machine, "mem32", None)
-        self._native_scan = hub75_native_scan
-        self._use_native_scan = False
-        self._use_fast_gpio = settings.USE_FAST_GPIO_SCAN and self._mem32 is not None
+    def set_on_time_us(self, value):
+        self.on_time_us = value
+        self._native.set_on_time_us(value)
 
-        if settings.USE_NATIVE_SCAN_ENGINE and self._native_scan is not None:
-            try:
-                self._native_scan.init(
-                    self.width,
-                    self.scan_rows,
-                    self.on_time_us,
-                    settings.R1_PIN,
-                    settings.G1_PIN,
-                    settings.B1_PIN,
-                    settings.R2_PIN,
-                    settings.G2_PIN,
-                    settings.B2_PIN,
-                    settings.ROWSEL_BASE_PIN,
-                    settings.ROWSEL_N_PINS,
-                    settings.CLK_PIN,
-                    settings.LAT_PIN,
-                    settings.OE_PIN,
-                    settings.NATIVE_DATA_SETUP_NOPS,
-                    settings.NATIVE_CLK_HIGH_NOPS,
-                    settings.NATIVE_LAT_HIGH_NOPS,
-                )
-                self._use_native_scan = True
-            except Exception as exc:
-                print("native scan disabled:", exc)
-                self._use_native_scan = False
-
-        self._rebuild_scan_words()
-        self._publish_scan_words()
+    def clear(self):
+        self._native.clear()
 
     def clear_frame(self, buf):
         for i in range(len(buf)):
@@ -169,12 +138,13 @@ class Hub75Display:
     def show_text(self, text):
         self.draw_text_center(self.back_frame, text, self.text_scale)
         self.front_frame, self.back_frame = self.back_frame, self.front_frame
-        self._rebuild_scan_words()
-        self._publish_scan_words()
+        self.show_frame()
 
-    def _publish_scan_words(self):
-        if self._use_native_scan:
-            self._native_scan.swap_scan_words(self._scan_words)
+    def show_frame(self):
+        """Publish front_frame: the native engine renders it into its back
+        buffer and swaps at the next frame boundary (no tearing, no gap)."""
+        self._rebuild_scan_words()
+        self._native.swap_scan_words(self._scan_words)
 
     @micropython.native
     def _rebuild_scan_words(self):
@@ -194,136 +164,3 @@ class Hub75Display:
                 top_on = frame_local[top_index + x]
                 bot_on = frame_local[bot_index + x]
                 scan_words[row_index + x] = (top_rgb_mask if top_on else 0) | (bot_rgb_mask if bot_on else 0)
-
-    @micropython.native
-    def _scan_frame_once_fast(self):
-        mem32 = self._mem32
-        gpio_set = self._gpio_set_addr
-        gpio_clr = self._gpio_clr_addr
-        rgb_mask = self._rgb_mask
-        clk_mask = self._clk_mask
-        lat_mask = self._lat_mask
-        oe_mask = self._oe_mask
-        row_mask_all = self._row_mask_all
-        row_masks = self._row_masks
-        scan_words = self._scan_words
-        width = self.width
-        scan_rows = self.scan_rows
-        sleep_us = time.sleep_us
-        on_time_us = self.on_time_us
-
-        for row in range(scan_rows):
-            mem32[gpio_set] = oe_mask
-
-            mem32[gpio_clr] = row_mask_all
-            mem32[gpio_set] = row_masks[row]
-
-            row_index = row * width
-            for x in range(width):
-                mem32[gpio_clr] = rgb_mask
-                mem32[gpio_set] = scan_words[row_index + x]
-                mem32[gpio_set] = clk_mask
-                mem32[gpio_clr] = clk_mask
-
-            mem32[gpio_set] = lat_mask
-            mem32[gpio_clr] = lat_mask
-
-            mem32[gpio_clr] = oe_mask
-            sleep_us(on_time_us)
-
-        # Keep output blanked between frame scans to avoid row hold artifacts.
-        mem32[gpio_set] = oe_mask
-
-    @micropython.native
-    def _scan_frame_once_compat(self):
-        r1_on = self.r1.on
-        r1_off = self.r1.off
-        g1_on = self.g1.on
-        g1_off = self.g1.off
-        b1_on = self.b1.on
-        b1_off = self.b1.off
-        r2_on = self.r2.on
-        r2_off = self.r2.off
-        g2_on = self.g2.on
-        g2_off = self.g2.off
-        b2_on = self.b2.on
-        b2_off = self.b2.off
-        row0_value = self.row_pins[0].value
-        row1_value = self.row_pins[1].value
-        row2_value = self.row_pins[2].value
-        row3_value = self.row_pins[3].value
-        clk_on = self.clk.on
-        clk_off = self.clk.off
-        lat_on = self.lat.on
-        lat_off = self.lat.off
-        oe_on = self.oe.on
-        oe_off = self.oe.off
-        sleep_us = time.sleep_us
-        width = self.width
-        scan_rows = self.scan_rows
-        on_time_us = self.on_time_us
-        scan_words = self._scan_words
-        top_mask = self._top_rgb_mask
-        bot_mask = self._bot_rgb_mask
-
-        for row in range(scan_rows):
-            oe_on()
-
-            row0_value(row & 0x01)
-            row1_value((row >> 1) & 0x01)
-            row2_value((row >> 2) & 0x01)
-            row3_value((row >> 3) & 0x01)
-
-            row_index = row * width
-            for x in range(width):
-                rgb_bits = scan_words[row_index + x]
-
-                if rgb_bits & top_mask:
-                    r1_on()
-                    g1_on()
-                    b1_on()
-                else:
-                    r1_off()
-                    g1_off()
-                    b1_off()
-
-                if rgb_bits & bot_mask:
-                    r2_on()
-                    g2_on()
-                    b2_on()
-                else:
-                    r2_off()
-                    g2_off()
-                    b2_off()
-
-                clk_on()
-                clk_off()
-
-            lat_on()
-            lat_off()
-
-            oe_off()
-            sleep_us(on_time_us)
-
-        # Keep output blanked between frame scans to avoid row hold artifacts.
-        oe_on()
-
-    @micropython.native
-    def scan_frame_once(self):
-        if self._use_native_scan:
-            self._native_scan.scan_once()
-            return
-
-        if self._use_fast_gpio:
-            self._scan_frame_once_fast()
-            return
-
-        self._scan_frame_once_compat()
-
-    def scan_batch(self, count):
-        if self._use_native_scan:
-            self._native_scan.scan_batch(count)
-            return
-
-        for _ in range(count):
-            self.scan_frame_once()
