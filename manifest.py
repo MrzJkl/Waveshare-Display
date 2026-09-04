@@ -1,16 +1,5 @@
-# Current manifest: board defaults + HUB75 MicroPython clock app.
+# Frozen modules: board defaults, the app package (recursively) and the local WLAN config.
 include("$(PORT_DIR)/boards/manifest.py")
 module("main.py", base_path=".", opt=0)
-module("app/__init__.py", base_path=".", opt=0)
-module("app/settings.py", base_path=".", opt=0)
-module("app/display.py", base_path=".", opt=0)
-module("app/font.py", base_path=".", opt=0)
-module("app/boot.py", base_path=".", opt=0)
-module("app/data.py", base_path=".", opt=0)
-module("app/runtime.py", base_path=".", opt=0)
-module("app/modules/__init__.py", base_path=".", opt=0)
-module("app/modules/base.py", base_path=".", opt=0)
-module("app/modules/clock.py", base_path=".", opt=0)
-module("app/modules/temperature.py", base_path=".", opt=0)
-module("app/modules/homeassistant.py", base_path=".", opt=0)
+package("app", base_path=".", opt=0)
 module("wifi_config.py", base_path=".", opt=0)

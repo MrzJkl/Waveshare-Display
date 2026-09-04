@@ -1,7 +1,7 @@
 # LED Display (Current Version)
 
-Dieses Repository ist auf den aktuellen Stand reduziert: **modulare MicroPython-App fuer HUB75**
-mit einer **autonomen Scan-Engine in C (PIO + DMA)**.
+**Modulare MicroPython-App fuer HUB75-Panels** mit einer **autonomen Scan-Engine in C (PIO + DMA)**.
+Widgets sind reines Python und zeichnen auf einen `framebuf`; die Engine haelt das Bild flackerfrei.
 
 ## Aktive Struktur
 
@@ -10,16 +10,18 @@ main.py
 manifest.py
 app/
   settings.py
-  display.py
-  font.py
-  boot.py
-  data.py
   runtime.py
-  modules/
+  shared/
+    display.py
+    font.py
+    wifi.py
+    timezone.py
+    timesync.py
+  widgets/
     base.py
-    clock.py
-    temperature.py
-    homeassistant.py
+    clock/widget.py
+    temperature/widget.py
+    homeassistant/widget.py
 native/
   hub75_native_scan/
     README.md
@@ -44,12 +46,13 @@ README.md
 ## Zweck der Dateien
 
 - [main.py](main.py): schlanker Entrypoint.
-- [app/display.py](app/display.py): Darstellungsebene: `framebuf`-Zeichenflaeche (GS8, ein Byte pro Pixel als Farbindex), Text-Helfer, Helligkeit; uebergibt den Framebuffer an die native Engine.
-- [app/font.py](app/font.py): 5x7-Bitmap-Font, gerendert per `framebuf.blit` mit Palette (skalierbar, farbig, optional mit Hintergrund).
-- [app/boot.py](app/boot.py): Boot-/Infrastruktur-Ebene (WLAN + NTP + Status-LED).
-- [app/data.py](app/data.py): Datenbeschaffungsebene (derzeit Platzhalter, spaeter Sensoren/APIs).
-- [app/modules](app/modules): rotierende Anzeige-Module (Clock, Temperatur, HomeAssistant).
-- [app/runtime.py](app/runtime.py): Orchestrierung und Modulrotation.
+- [app/shared/display.py](app/shared/display.py): Darstellungsebene: `framebuf`-Zeichenflaeche (GS8, ein Byte pro Pixel als Farbindex), Text-Helfer, Helligkeit; uebergibt den Framebuffer an die native Engine.
+- [app/shared/font.py](app/shared/font.py): Bitmap-Fonts (5x7 Text, 3x7 Digitalziffern), gerendert per `framebuf.blit` mit Palette (skalierbar, farbig, optional mit Hintergrund).
+- [app/shared/wifi.py](app/shared/wifi.py): WLAN-Verbindung und Status-LED.
+- [app/shared/timesync.py](app/shared/timesync.py): Zeitquelle: nicht blockierender SNTP-Client mit Laufzeitkompensation, Plausibilitaetspruefung und Server-Fallback; laeuft zwischen den Syncs auf dem Millisekunden-Ticker.
+- [app/shared/timezone.py](app/shared/timezone.py): Zeitzonen mit lokal berechneter Sommerzeitregel (EU), z. B. `Europe/Berlin` = CET/CEST.
+- [app/widgets](app/widgets): ein Ordner pro Widget mit Darstellung und (spaeter) eigenem Datenclient: [clock](app/widgets/clock/widget.py) (taktische Uhr), Temperatur und HomeAssistant als Platzhalter. [base.py](app/widgets/base.py) beschreibt den Lebenszyklus.
+- [app/runtime.py](app/runtime.py): Hauptschleife: Dienste, `service()` aller Widgets, Rotation mit Fade, Zeichnen genau dann, wenn das Widget es will oder seine Daten sich aendern.
 - [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul, das das Panel komplett in Hardware (PIO + DMA) refresht. Aufbau und Funktionsweise sind in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md) erklaert.
 - [manifest.py](manifest.py): Frozen-Manifest fuer den Build.
 - [tools/generate_wifi_config.sh](tools/generate_wifi_config.sh): erzeugt lokale [wifi_config.py](wifi_config.py) aus Env-Variablen.
@@ -75,11 +78,20 @@ README.md
 - **Helligkeit:** `display.set_brightness(0.0..1.0)` verschiebt die Grenze zwischen Leucht- und
   Dunkelphase; die Bildrate bleibt konstant, die Aenderung landet an der naechsten Frame-Grenze.
   `display.fade_to(level, ms)` rampt weich (Baustein fuer sanfte Widget-Wechsel).
-- **Boot/Infra:** WLAN/NTP/LED, kein Zeichnen.
-- **Module:** liefern nur Anzeige-Text und koennen beliebig erweitert werden.
-- **Runtime:** schlaeft zwischen Service-Laeufen (`LOOP_IDLE_MS`) und rotiert Module alle paar Sekunden.
+- **Zeit:** `TimeSync` fragt per SNTP mehrere Server ab (nicht blockierend, mehrere Messungen, die mit der
+  kleinsten Laufzeit gewinnt, Plausibilitaetspruefung) und laeuft dazwischen auf `time.ticks_ms()`.
+  Die Zeitzone rechnet `timezone.py` lokal inklusive Sommerzeit. Vor dem ersten Sync zeigt die Uhr
+  Striche und ein blinkendes `SYNC`; ist der letzte Sync aelter als `TIME_STALE_MS`, wird die
+  Datumszeile gelb.
+- **Widgets:** reines Python, ein Ordner pro Widget. `service(now, ctx)` wird fuer alle Widgets in jedem
+  Schleifendurchlauf gerufen (Daten holen, nicht blockieren, `self.revision` erhoehen, wenn sich etwas
+  geaendert hat). `draw(display, ctx)` zeichnet einen kompletten Frame auf `display.fb` und gibt zurueck,
+  in wie vielen Millisekunden es wieder gezeichnet werden will (die Uhr: bis zur naechsten
+  Sekundengrenze). `ctx` liefert Netz (`ctx.net`) und Zeit (`ctx.time`).
+- **Runtime:** ruft die Dienste auf, rotiert Widgets alle `WIDGET_ROTATE_MS` mit Aus-/Einblenden
+  (`TRANSITION_MS`) und schlaeft sonst bis zum naechsten Zeichenzeitpunkt.
 
-Damit kannst du spaeter leicht z. B. Wetter, HomeAssistant oder Kalender als eigene Module einhaengen.
+Damit kannst du spaeter leicht z. B. Wetter, HomeAssistant oder Kalender als eigene Widgets einhaengen.
 
 ### Native API (`hub75_native_scan`)
 
@@ -112,6 +124,20 @@ Grenzen: `MAX_WIDTH = 128`, `MAX_SCAN_ROWS = 32` (statische Puffer, ca. 36 KB RA
 
 Bei Ghosting oder Bildfehlern zuerst `NATIVE_PIO_CLKDIV` erhoehen (z. B. 3.0), danach die ns-Werte.
 Die Herleitung der Werte und eine Symptom-Tabelle stehen in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md).
+
+### Zeit und Uhr
+
+| Setting | Default | Bedeutung |
+| --- | --- | --- |
+| `TIMEZONE` | `Europe/Berlin` | Zone aus `app/timezone.py` (CET/CEST mit EU-Regel) |
+| `NTP_HOSTS` | Router, `pool.ntp.org`, `time.cloudflare.com` | Reihenfolge der Zeitserver; nach einem Fehlschlag wird zum naechsten gewechselt |
+| `NTP_SAMPLES` | 3 | Messungen pro Sync, die mit der kleinsten Laufzeit wird uebernommen |
+| `NTP_MAX_DELAY_MS` | 500 | Antworten mit groesserer Laufzeit werden verworfen |
+| `NTP_RESYNC_MS` | 1 h | Abstand zwischen erfolgreichen Syncs |
+| `TIME_STALE_MS` | 6 h | danach gilt die Zeit als veraltet (Datumszeile gelb) |
+| `CLOCK_TIME_COLOR`, `CLOCK_DATE_COLOR` | weiss, rot | Farben der Uhr (Farbindex 0..7) |
+| `CLOCK_WEEKDAYS` | `MO`..`SO` | Wochentagskuerzel |
+| `WIDGET_ROTATE_MS`, `TRANSITION_MS` | 15 s, 400 ms | Widget-Wechsel und Fade-Dauer |
 
 ## Schnellstart
 
@@ -166,8 +192,13 @@ Wert nach `BRIGHTNESS_GAMMA` in `settings.py` uebernehmen.
 
 Hinweis: `wifi_config.py` ist absichtlich nicht versioniert.
 
-## Neues Modul hinzufuegen
+## Neues Widget hinzufuegen
 
-1. Datei in [app/modules](app/modules) anlegen, Klasse von `DisplayModule` ableiten und `render(...)` implementieren.
-2. Modul in [app/modules/__init__.py](app/modules/__init__.py) in `create_default_modules()` aufnehmen.
-3. Datei in [manifest.py](manifest.py) mit `module("app/modules/dein_modul.py", ...)` einfrieren.
+1. Ordner `app/widgets/dein_widget/` mit `__init__.py` und `widget.py` anlegen, Klasse von `Widget`
+   ableiten (siehe [base.py](app/widgets/base.py)): Daten in `service(now, ctx)` holen, Frame in
+   `draw(display, ctx)` zeichnen (`display.clear()`, `display.text(...)`, `display.text_center(...)`,
+   `display.fb.rect(...)` usw.) und zurueckgeben, nach wie vielen Millisekunden neu gezeichnet werden soll.
+   Fonts: `display.font` (5x7, Buchstaben/Ziffern/Satzzeichen) und `app.shared.font.FONT_DIGITAL` (3x7-Ziffern).
+   Ein eigener Datenclient (REST, MQTT, Sensor) gehoert als weitere Datei in denselben Ordner.
+2. Widget in [app/widgets/__init__.py](app/widgets/__init__.py) in `create_default_widgets()` aufnehmen.
+   Das Manifest friert das ganze Paket `app` ein, dort ist nichts zu tun.

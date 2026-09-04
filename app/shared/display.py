@@ -11,7 +11,7 @@ import framebuf
 import time
 
 from app import settings
-from app.font import Font5x7
+from app.shared.font import FONT_5X7
 
 try:
     import hub75_native_scan
@@ -52,7 +52,7 @@ class Hub75Display:
         # The drawing surface. Its raw bytes go straight to the native engine.
         self.buf = bytearray(self.width * self.height)
         self.fb = framebuf.FrameBuffer(self.buf, self.width, self.height, framebuf.GS8)
-        self.font = Font5x7()
+        self.font = FONT_5X7   # default font; widgets may pass another one
 
         self._native = hub75_native_scan
         self._native.init(
@@ -101,18 +101,19 @@ class Hub75Display:
     def clear(self, colour=BLACK):
         self.fb.fill(colour)
 
-    def text(self, text, x, y, colour=WHITE, scale=1, background=None):
+    def text(self, text, x, y, colour=WHITE, scale=1, background=None, font=None):
         """Draw text with its top-left corner at (x, y); returns the x after it."""
-        return self.font.draw(self.fb, text, x, y, colour, scale, background)
+        return (font or self.font).draw(self.fb, text, x, y, colour, scale, background)
 
-    def text_center(self, text, colour=WHITE, scale=None, y=None):
+    def text_center(self, text, colour=WHITE, scale=None, y=None, font=None):
         """Draw text horizontally centred; vertically centred unless y is given."""
+        font = font or self.font
         if scale is None:
             scale = self.text_scale
-        x = (self.width - self.font.text_width(text, scale)) // 2
+        x = (self.width - font.text_width(text, scale)) // 2
         if y is None:
-            y = (self.height - self.font.text_height(scale)) // 2
-        self.font.draw(self.fb, text, x, y, colour, scale)
+            y = (self.height - font.text_height(scale)) // 2
+        font.draw(self.fb, text, x, y, colour, scale)
 
     def show_text(self, text, colour=None):
         """Clear, draw `text` centred in the default text colour and show it."""

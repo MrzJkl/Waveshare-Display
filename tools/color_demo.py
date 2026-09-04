@@ -6,7 +6,7 @@
 
 import time
 
-from app.display import Hub75Display, BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE
+from app.shared.display import Hub75Display, BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE
 
 
 def step(n, title, expect, seconds):
