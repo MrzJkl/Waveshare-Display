@@ -34,7 +34,7 @@ static const char *const result_text[HUB75_RESULT_COUNT] = {
     [HUB75_ERR_BRIGHTNESS] = "brightness must be 0..65535",
     [HUB75_ERR_GPIO] = "invalid GPIO number",
     [HUB75_ERR_PINS_NOT_DISTINCT] = "pins must be distinct",
-    [HUB75_ERR_BUFFER_SIZE] = "scan_words buffer size mismatch",
+    [HUB75_ERR_BUFFER_SIZE] = "frame must be width * 2 * scan_rows bytes",
     [HUB75_ERR_SAMPLE_MS] = "sample_ms must be 1..10000",
     [HUB75_ERR_NO_PIO] = "no free PIO state machine",
     [HUB75_ERR_NO_DMA] = "no free DMA channels",
@@ -139,9 +139,19 @@ static void derive_pins(hub75_t *st) {
     st->out_base = min_pin;
     st->out_count = max_pin - min_pin + 1;
     st->all_pins_mask = mask;
-    st->rgb_word_mask = 0;
-    for (uint32_t i = 0; i < HUB75_RGB_PINS; i++) {
-        st->rgb_word_mask |= 1u << (st->cfg.rgb_pins[i] - min_pin);
+
+    // Colour index (bit 0 = R, bit 1 = G, bit 2 = B) -> word bits of the RGB
+    // pins; rgb_pins[] is ordered R1 G1 B1 R2 G2 B2.
+    for (uint32_t colour = 0; colour < 8; colour++) {
+        uint32_t top = 0, bot = 0;
+        for (uint32_t channel = 0; channel < 3; channel++) {
+            if (colour & (1u << channel)) {
+                top |= 1u << (st->cfg.rgb_pins[channel] - min_pin);
+                bot |= 1u << (st->cfg.rgb_pins[3 + channel] - min_pin);
+            }
+        }
+        st->colour_top[colour] = top;
+        st->colour_bot[colour] = bot;
     }
     st->lat_word = 1u << (st->cfg.lat_pin - min_pin);
     st->oe_word = 1u << (st->cfg.oe_pin - min_pin);
@@ -187,7 +197,7 @@ hub75_result_t hub75_init(const hub75_config_t *cfg) {
     // first visible frame never shows whatever the shift registers held.  The
     // state machine drains these words while they are pushed.
     static uint32_t prologue[HUB75_ROW_WORDS(HUB75_MAX_WIDTH)];
-    hub75_stream_build_row(st, prologue, NULL, cfg->scan_rows - 1, true);
+    hub75_stream_build_row(st, prologue, NULL, NULL, cfg->scan_rows - 1, true);
     hub75_pio_feed_blocking(st, prologue, st->row_words);
 
     // From here on the DMA loop feeds the state machine forever.
@@ -203,35 +213,20 @@ void hub75_deinit(void) {
     memset(st, 0, sizeof(*st));
 }
 
-bool hub75_is_initialized(void) {
-    return hub75.initialized;
-}
-
 // ---------------------------------------------------------------------------
 // Frames
 // ---------------------------------------------------------------------------
 
-hub75_result_t hub75_show(const uint32_t *scan_words, size_t n_words) {
+hub75_result_t hub75_show(const uint8_t *pixels, size_t n_bytes) {
     hub75_t *st = &hub75;
     if (!st->initialized) {
         return HUB75_ERR_NOT_INITIALIZED;
     }
-    if (n_words != (size_t)st->cfg.width * st->cfg.scan_rows) {
+    if (n_bytes != (size_t)st->cfg.width * st->cfg.scan_rows * 2u) {
         return HUB75_ERR_BUFFER_SIZE;
     }
     const uint32_t back = st->front ^ 1u;
-    hub75_stream_build_frame(st, st->buffers[back], scan_words);
-    hub75_dma_publish(st, back);
-    return HUB75_OK;
-}
-
-hub75_result_t hub75_clear(void) {
-    hub75_t *st = &hub75;
-    if (!st->initialized) {
-        return HUB75_ERR_NOT_INITIALIZED;
-    }
-    const uint32_t back = st->front ^ 1u;
-    hub75_stream_build_frame(st, st->buffers[back], NULL);
+    hub75_stream_build_frame(st, st->buffers[back], pixels);
     hub75_dma_publish(st, back);
     return HUB75_OK;
 }

@@ -108,15 +108,12 @@ hub75_result_t hub75_init(const hub75_config_t *cfg);
 // to software control.  Safe to call when not initialised.
 void hub75_deinit(void);
 
-bool hub75_is_initialized(void);
-
-// Show a new frame.  scan_words holds width * scan_rows words, one per
-// (scan row, column): the absolute GPIO mask of the RGB pins that are on.
-// Returns once the DMA has switched to the new frame (about one frame time).
-hub75_result_t hub75_show(const uint32_t *scan_words, size_t n_words);
-
-// Show a blank frame.
-hub75_result_t hub75_clear(void);
+// Show a new frame.  pixels holds width * (2 * scan_rows) bytes in row-major
+// order, one byte per pixel: bit 0 = red, bit 1 = green, bit 2 = blue, other
+// bits ignored.  Rows 0 .. scan_rows-1 are the upper panel half (R1/G1/B1),
+// the rest the lower half (R2/G2/B2).  Returns once the DMA has switched to
+// the new frame (about one frame time).
+hub75_result_t hub75_show(const uint8_t *pixels, size_t n_bytes);
 
 // Change the per-row time budget on the fly (refresh rate; brightness keeps
 // its relative level).  Tear-free: takes effect at the next frame boundary.

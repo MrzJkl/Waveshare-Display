@@ -91,23 +91,15 @@ static mp_obj_t mod_init(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_a
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(mod_init_obj, 0, mod_init);
 
-// swap_scan_words(words): array('I') with width * scan_rows GPIO masks.
-static mp_obj_t mod_swap_scan_words(mp_obj_t words_obj) {
+// show_frame(buf): width * height bytes, one colour index per pixel
+// (bit 0 red, bit 1 green, bit 2 blue), e.g. the buffer of a framebuf GS8.
+static mp_obj_t mod_show_frame(mp_obj_t buf_obj) {
     mp_buffer_info_t bufinfo;
-    mp_get_buffer_raise(words_obj, &bufinfo, MP_BUFFER_READ);
-    if (bufinfo.len % sizeof(uint32_t) != 0) {
-        raise_if_error(HUB75_ERR_BUFFER_SIZE);
-    }
-    raise_if_error(hub75_show((const uint32_t *)bufinfo.buf, bufinfo.len / sizeof(uint32_t)));
+    mp_get_buffer_raise(buf_obj, &bufinfo, MP_BUFFER_READ);
+    raise_if_error(hub75_show((const uint8_t *)bufinfo.buf, bufinfo.len));
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_1(mod_swap_scan_words_obj, mod_swap_scan_words);
-
-static mp_obj_t mod_clear(void) {
-    raise_if_error(hub75_clear());
-    return mp_const_none;
-}
-static MP_DEFINE_CONST_FUN_OBJ_0(mod_clear_obj, mod_clear);
+static MP_DEFINE_CONST_FUN_OBJ_1(mod_show_frame_obj, mod_show_frame);
 
 static mp_obj_t mod_set_on_time_us(mp_obj_t value_obj) {
     raise_if_error(hub75_set_on_time_us(arg_u32(mp_obj_get_int(value_obj))));
@@ -171,8 +163,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(mod_deinit_obj, mod_deinit);
 static const mp_rom_map_elem_t module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_hub75_native_scan) },
     { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&mod_init_obj) },
-    { MP_ROM_QSTR(MP_QSTR_swap_scan_words), MP_ROM_PTR(&mod_swap_scan_words_obj) },
-    { MP_ROM_QSTR(MP_QSTR_clear), MP_ROM_PTR(&mod_clear_obj) },
+    { MP_ROM_QSTR(MP_QSTR_show_frame), MP_ROM_PTR(&mod_show_frame_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_on_time_us), MP_ROM_PTR(&mod_set_on_time_us_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_brightness), MP_ROM_PTR(&mod_set_brightness_obj) },
     { MP_ROM_QSTR(MP_QSTR_is_running), MP_ROM_PTR(&mod_is_running_obj) },

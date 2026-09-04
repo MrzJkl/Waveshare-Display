@@ -216,10 +216,12 @@ Die Wartezaehler sind PIO-Takte. Eine Phase dauert `Zaehler + 3` Takte (`out pin
 der letzte Schleifendurchlauf). `hub75_stream_compute_timing()` rechnet die Nanosekunden aus
 `settings.py` in Takte um, rundet auf und zieht die 3 ab.
 
-Die Pixelwoerter entstehen aus den `scan_words`, die Python liefert: pro (Scanzeile, Spalte) eine
-GPIO-Maske der eingeschalteten RGB-Pins (obere Haelfte R1/G1/B1, untere Haelfte R2/G2/B2). Die
-Engine schiebt die Maske um `out_base` nach rechts, maskiert auf die RGB-Bits und ergaenzt Adresse
-und Steuerbits.
+Die Pixelwoerter entstehen aus dem Framebuffer, den Python liefert: `width * height` Bytes, ein
+Farbindex pro Pixel (Bit 0 rot, Bit 1 gruen, Bit 2 blau). Fuer Scanzeile `r` liest die Engine das
+Byte aus Bildzeile `r` (obere Haelfte) und aus Bildzeile `r + scan_rows` (untere Haelfte) und
+schlaegt beide in einer Tabelle nach: `colour_top[]` liefert die R1/G1/B1-Bits, `colour_bot[]` die
+R2/G2/B2-Bits. Dazu kommen Adresse und Steuerbits. Das Byte-Format ist genau das von
+`framebuf.GS8`, deshalb kann `display.py` den Puffer ohne Umweg uebergeben.
 
 ## 6. Die DMA-Kette
 
@@ -306,8 +308,7 @@ Python-API (siehe auch die Haupt-README):
 | Funktion | Zweck |
 | --- | --- |
 | `init(width, scan_rows, r1, g1, b1, r2, g2, b2, row_base_pin, row_n_pins, clk_pin, lat_pin, oe_pin, *, on_time_us=32, pio_clkdiv=2.0, clk_half_cycles=4, oe_guard_ns=60, latch_ns=120, addr_ns=200)` | Refresh starten, Panel zunaechst dunkel |
-| `swap_scan_words(words)` | neuen Frame anzeigen (`array('I')`, `width * scan_rows` Woerter) |
-| `clear()` | Panel dunkel schalten |
+| `show_frame(buf)` | neuen Frame anzeigen: `width * height` Bytes, ein Farbindex pro Pixel |
 | `set_brightness(level)` | Helligkeit 0..65535 (linearer Tastgrad) bei konstanter Bildrate |
 | `set_on_time_us(us)` | Zeitbudget pro Zeile aendern (Bildrate) |
 | `stats()` | Dict mit PIO/DMA-Zuordnung, Pixeltakt, Zeilen- und Frame-Zeit |
@@ -334,8 +335,9 @@ Zeiten muessen den Werten aus Kapitel 7 entsprechen.
 
 - **Sanfte Uebergaenge zwischen Anzeigen:** `display.fade_to(0.0)`, neuen Frame zeigen,
   `display.fade_to(1.0)`. Die Helligkeitsaenderung kostet pro Schritt etwa eine Frame-Zeit.
-- **Farben und Graustufen:** mehrere Bitplanes pro Zeile mit unterschiedlich langer Leuchtphase
-  (Binary Code Modulation). Der Wortstrom wird pro Zeile mehrfach mit anderen Pixelwoertern und
-  anderem `on_time` aufgebaut; PIO und DMA bleiben unveraendert.
+- **Graustufen und Mischfarben:** mehrere Bitplanes pro Zeile mit unterschiedlich langer
+  Leuchtphase (Binary Code Modulation). Der Wortstrom wird pro Zeile mehrfach mit anderen
+  Pixelwoertern und anderem Budget aufgebaut; PIO und DMA bleiben unveraendert. Heute gibt es die
+  acht Grundfarben (ein Bit pro Kanal).
 - **Groessere Panels oder Ketten:** `width` = Gesamtbreite der Kette, `scan_rows` und `row_n_pins`
   anpassen, Grenzen `HUB75_MAX_*` beim Build erhoehen (`-DHUB75_MAX_WIDTH=256`).

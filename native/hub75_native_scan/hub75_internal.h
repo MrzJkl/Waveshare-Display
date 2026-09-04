@@ -30,6 +30,11 @@
 // so one "out pins, 32" sets RGB, address, LAT and OE together.  CLK is driven
 // by side-set and is always 0 in the words.
 //
+// Pixel words are built from the caller's frame (one byte per pixel, bits
+// 0..2 = R, G, B) with two lookup tables: colour_top[] maps the byte of the
+// upper-half pixel to the R1/G1/B1 bits, colour_bot[] the lower-half pixel to
+// the R2/G2/B2 bits.
+//
 // Pixel words carry the address of the PREVIOUS row: while row n is shifted
 // into the panel's shift registers, row n-1 is still displayed from the
 // output latches.  Only phase 3 (panel blanked) switches the address.
@@ -71,7 +76,8 @@ typedef struct {
     uint32_t out_base;
     uint32_t out_count;
     uint32_t all_pins_mask;     // absolute GPIO mask of every panel pin
-    uint32_t rgb_word_mask;
+    uint32_t colour_top[8];     // colour index -> R1/G1/B1 word bits
+    uint32_t colour_bot[8];     // colour index -> R2/G2/B2 word bits
     uint32_t lat_word;
     uint32_t oe_word;
 
@@ -105,8 +111,8 @@ typedef struct {
 uint32_t *hub75_stream_buffer(uint32_t index);
 void hub75_stream_compute_timing(hub75_t *st);
 uint32_t hub75_stream_row_address_word(const hub75_t *st, uint32_t row);
-void hub75_stream_build_row(const hub75_t *st, uint32_t *dst, const uint32_t *src, uint32_t row, bool blank);
-void hub75_stream_build_frame(const hub75_t *st, uint32_t *dst, const uint32_t *src);
+void hub75_stream_build_row(const hub75_t *st, uint32_t *dst, const uint8_t *top, const uint8_t *bot, uint32_t row, bool blank);
+void hub75_stream_build_frame(const hub75_t *st, uint32_t *dst, const uint8_t *pixels);
 void hub75_stream_apply_control(const hub75_t *st, uint32_t *dst);
 
 // hub75_pio.c

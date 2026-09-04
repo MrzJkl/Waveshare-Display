@@ -50,6 +50,7 @@ CPU_FREQ_HZ = 250_000_000
 WLAN_PM_PERF = 0xA11140
 
 TEXT_SCALE = 2
+TEXT_COLOR = 7   # Farbindex: Bit 0 rot, Bit 1 gruen, Bit 2 blau -> 7 = weiss
 UTC_OFFSET_HOURS = 2
 
 NTP_HOST = "192.168.178.1"

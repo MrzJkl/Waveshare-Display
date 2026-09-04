@@ -1,6 +1,6 @@
 # Visueller Test fuer Helligkeit und Fading auf dem Panel.
 #
-# Start vom Host:   ./tools/run_brightness_demo.sh
+# Start vom Host:   ./tools/run_demo.sh brightness
 #   (entspricht: mpremote run tools/brightness_demo.py; mpremote reset)
 #
 # Das Skript laeuft ca. 60 s, zeigt auf dem Panel nacheinander acht Tests und

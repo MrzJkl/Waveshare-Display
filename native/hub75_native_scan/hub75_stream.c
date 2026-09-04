@@ -146,24 +146,23 @@ static void write_control_words(const hub75_t *st, uint32_t *ctrl, uint32_t row,
 }
 
 // Build the block for one scan row.
-//   dst    row_words entries
-//   src    width words of absolute GPIO masks (RGB pins that are on), or NULL for a dark row
-//   blank  keep OE off during the whole block (start-up prologue)
-void hub75_stream_build_row(const hub75_t *st, uint32_t *dst, const uint32_t *src, uint32_t row, bool blank) {
+//   dst       row_words entries
+//   top, bot  width bytes each: colour index (bits 0..2 = R, G, B) of the pixel
+//             in the upper and the lower panel half, or NULL for a dark row
+//   blank     keep OE off during the whole block (start-up prologue)
+void hub75_stream_build_row(const hub75_t *st, uint32_t *dst, const uint8_t *top, const uint8_t *bot, uint32_t row, bool blank) {
     const uint32_t width = st->cfg.width;
     const uint32_t prev_row = (row == 0) ? st->cfg.scan_rows - 1 : row - 1;
 
-    // Pixel words: RGB bits of this row, address of the previous row (still
+    // Pixel words: RGB bits of both halves, address of the previous row (still
     // displayed while we shift), LAT low, OE as the brightness mode dictates.
     const uint32_t pixel_ctrl = hub75_stream_row_address_word(st, prev_row) | shift_oe_bits(st, blank);
 
     size_t i = 0;
     dst[i++] = width - 1;
-    if (src != NULL) {
-        const uint32_t shift = st->out_base;
-        const uint32_t mask = st->rgb_word_mask;
+    if (top != NULL && bot != NULL) {
         for (uint32_t x = 0; x < width; x++) {
-            dst[i++] = ((src[x] >> shift) & mask) | pixel_ctrl;
+            dst[i++] = st->colour_top[top[x] & 7u] | st->colour_bot[bot[x] & 7u] | pixel_ctrl;
         }
     } else {
         for (uint32_t x = 0; x < width; x++) {
@@ -173,10 +172,13 @@ void hub75_stream_build_row(const hub75_t *st, uint32_t *dst, const uint32_t *sr
     write_control_words(st, dst + i, row, blank);
 }
 
-void hub75_stream_build_frame(const hub75_t *st, uint32_t *dst, const uint32_t *src) {
+// pixels: width * 2 * scan_rows bytes, upper half first, or NULL for a dark frame.
+void hub75_stream_build_frame(const hub75_t *st, uint32_t *dst, const uint8_t *pixels) {
+    const size_t width = st->cfg.width;
     for (uint32_t row = 0; row < st->cfg.scan_rows; row++) {
-        const uint32_t *src_row = (src != NULL) ? src + (size_t)row * st->cfg.width : NULL;
-        hub75_stream_build_row(st, dst + (size_t)row * st->row_words, src_row, row, false);
+        const uint8_t *top = pixels ? pixels + (size_t)row * width : NULL;
+        const uint8_t *bot = pixels ? pixels + ((size_t)row + st->cfg.scan_rows) * width : NULL;
+        hub75_stream_build_row(st, dst + (size_t)row * st->row_words, top, bot, row, false);
     }
 }
 
