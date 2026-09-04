@@ -14,7 +14,7 @@ GAMMA = None
 import time
 
 from app import settings
-from app.display import Hub75Display
+from app.shared.display import Hub75Display
 
 
 def step(n, title, expect, seconds):

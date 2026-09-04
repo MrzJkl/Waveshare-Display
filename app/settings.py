@@ -34,28 +34,37 @@ NATIVE_OE_GUARD_NS = 60        # Dunkelphase vor dem Latch (BASE_OE_NS)
 NATIVE_LATCH_NS = 120          # Latch-Pulsbreite und Latch-Settle (BASE_LATCH_NS)
 NATIVE_ADDR_NS = 200           # Settle nach Zeilenadresswechsel vor OE (BASE_ADDR_NS)
 
-# Hauptschleife: das Panel refresht sich selbst, der Loop schlaeft zwischen
-# den Service-Laeufen.
-LOOP_IDLE_MS = 50
-SERVICE_INTERVAL_MS = 250
-MODULE_ROTATE_MS = 15000
+# Hauptschleife: das Panel refresht sich selbst, der Loop schlaeft bis zum
+# naechsten Zeichenzeitpunkt, hoechstens LOOP_MAX_SLEEP_MS.
+LOOP_MAX_SLEEP_MS = 50
+WIDGET_ROTATE_MS = 15000       # Widget-Wechsel; 0 = nur das erste Widget zeigen
+TRANSITION_MS = 400            # Aus-/Einblenden beim Widget-Wechsel; 0 = hart
 DATA_REFRESH_MS = 6000
 
 WIFI_RETRY_MS = 15000
-NTP_RETRY_MS = 60000
-NTP_RESYNC_MS = 60 * 60 * 1000
-NTP_TIMEOUT_S = 0.1
-
-CPU_FREQ_HZ = 250_000_000
 WLAN_PM_PERF = 0xA11140
 
+# Zeit: nicht blockierender SNTP-Client, siehe app/timesync.py.
+TIMEZONE = "Europe/Berlin"     # Zonen in app/timezone.py
+NTP_HOSTS = ("192.168.178.1", "pool.ntp.org", "time.cloudflare.com")
+NTP_PORT = 123
+NTP_SAMPLES = 3                # Messungen pro Sync, die mit der kleinsten Laufzeit gewinnt
+NTP_TIMEOUT_MS = 1500
+NTP_MAX_DELAY_MS = 500         # Antworten mit groesserer Laufzeit werden verworfen
+NTP_RETRY_MS = 30000           # nach fehlgeschlagenem Sync (dann naechster Server)
+NTP_RESYNC_MS = 60 * 60 * 1000
+TIME_STALE_MS = 6 * 60 * 60 * 1000   # danach zeigt die Uhr die Datumszeile gelb
+
+CPU_FREQ_HZ = 250_000_000
+
+# Text-Widgets
 TEXT_SCALE = 2
 TEXT_COLOR = 7   # Farbindex: Bit 0 rot, Bit 1 gruen, Bit 2 blau -> 7 = weiss
-UTC_OFFSET_HOURS = 2
 
-NTP_HOST = "192.168.178.1"
-NTP_PORT = 123
-NTP_DELTA = 2208988800
+# Uhr-Widget
+CLOCK_TIME_COLOR = 7           # weiss
+CLOCK_DATE_COLOR = 1           # rot (gelb, wenn der letzte Zeitabgleich aelter als TIME_STALE_MS ist)
+CLOCK_WEEKDAYS = ("MO", "DI", "MI", "DO", "FR", "SA", "SO")
 
 try:
     from wifi_config import WIFI_PASSWORD, WIFI_SSID

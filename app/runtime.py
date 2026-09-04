@@ -1,50 +1,61 @@
+"""Main loop: services (WLAN, time sync, data), widget rotation and drawing.
+
+The panel refreshes itself in hardware, so this loop only has to draw a new
+frame when the current widget asks for it or its data changed. It sleeps
+until the next such moment, at most LOOP_MAX_SLEEP_MS, so the non-blocking
+services get their turn regularly.
+"""
+
 import time
 
 import machine
 from machine import Pin
 
 from app import settings
-from app.boot import BootService
-from app.data import DataProviders
-from app.display import Hub75Display
-from app.modules import create_default_modules
+from app.shared import timezone
+from app.shared.display import Hub75Display
+from app.shared.timesync import TimeSync
+from app.shared.wifi import WifiService
+from app.widgets import create_default_widgets
 
 
-class ModuleRotator:
-    def __init__(self, modules, rotate_ms):
-        if not modules:
-            raise ValueError("modules list is empty")
+class Context:
+    """What widgets get to look at."""
 
-        self.modules = modules
+    def __init__(self, net, time_sync):
+        self.net = net          # WifiService: connected
+        self.time = time_sync   # TimeSync: now_ms(), zone, health(), synced
+
+
+class Rotator:
+    def __init__(self, widgets, rotate_ms):
+        if not widgets:
+            raise ValueError("widget list is empty")
+        self.widgets = widgets
         self.rotate_ms = rotate_ms
         self.index = 0
         self.next_switch_ms = time.ticks_add(time.ticks_ms(), rotate_ms)
 
-    def current(self, providers, boot_state):
-        module = self.modules[self.index]
-        if module.is_ready(providers, boot_state):
-            return module
-
-        for candidate in self.modules:
-            if candidate.is_ready(providers, boot_state):
+    def current(self, ctx):
+        widget = self.widgets[self.index]
+        if widget.is_ready(ctx):
+            return widget
+        for candidate in self.widgets:
+            if candidate.is_ready(ctx):
                 return candidate
+        return self.widgets[0]
 
-        return self.modules[0]
-
-    def service(self, now_ticks, providers, boot_state):
-        if len(self.modules) < 2:
-            return False
+    def service(self, now_ticks, ctx):
+        if len(self.widgets) < 2 or self.rotate_ms <= 0:
+            return
         if time.ticks_diff(now_ticks, self.next_switch_ms) < 0:
-            return False
-
-        for step in range(1, len(self.modules) + 1):
-            candidate_index = (self.index + step) % len(self.modules)
-            candidate = self.modules[candidate_index]
-            if candidate.is_ready(providers, boot_state):
-                self.index = candidate_index
+            return
+        for step in range(1, len(self.widgets) + 1):
+            index = (self.index + step) % len(self.widgets)
+            if self.widgets[index].is_ready(ctx):
+                self.index = index
                 break
         self.next_switch_ms = time.ticks_add(now_ticks, self.rotate_ms)
-        return True
 
 
 def _led_blink(status_led, count, on_ms=90, off_ms=90, tail_ms=800):
@@ -62,95 +73,84 @@ def _fatal_loop(status_led, code=5):
         _led_blink(status_led, code)
 
 
+def _draw(display, widget, ctx):
+    wait = widget.draw(display, ctx)
+    display.show()
+    return 1000 if wait is None else max(1, wait)
+
+
+def _switch(display, widget, ctx, fade):
+    """Show a different widget, with a fade out / fade in when fade is set."""
+    level = display.brightness
+    if fade:
+        display.fade_to(0.0, settings.TRANSITION_MS)
+    wait = _draw(display, widget, ctx)
+    if fade:
+        display.fade_to(level, settings.TRANSITION_MS)
+    return wait
+
+
 def _run(status_led):
-    print("hub75 modular runtime start")
+    print("hub75 runtime start")
 
     try:
         machine.freq(settings.CPU_FREQ_HZ)
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         print("cpu freq unchanged:", exc)
 
     display = Hub75Display()
-    boot = BootService(status_led)
-    providers = DataProviders()
-    rotator = ModuleRotator(create_default_modules(), settings.MODULE_ROTATE_MS)
-
-    display.show_text("--:--")
+    net = WifiService(status_led)
+    time_sync = TimeSync(timezone.get_zone(settings.TIMEZONE))
+    ctx = Context(net, time_sync)
+    widgets = create_default_widgets()
+    rotator = Rotator(widgets, settings.WIDGET_ROTATE_MS)
 
     ticks_ms = time.ticks_ms
     ticks_diff = time.ticks_diff
     ticks_add = time.ticks_add
+    max_sleep = settings.LOOP_MAX_SLEEP_MS
+    fade = settings.TRANSITION_MS > 0
 
-    next_service = ticks_ms()
+    current = None
+    next_draw = ticks_ms()
     last_second = -1
-    last_text = ""
-    last_provider_revision = -1
-    last_module_name = ""
-    last_clock_minute = -1
-    force_redraw = True
-
-    idle_ms = settings.LOOP_IDLE_MS
-    sleep_ms = time.sleep_ms
+    last_widget_revision = -1
+    last_time_revision = -1
 
     while True:
-        # The panel refreshes itself in hardware (PIO + DMA); just idle between
-        # service runs and let WLAN/USB background work happen.
-        sleep_ms(idle_ms)
+        now = ticks_ms()
 
-        now_ticks = ticks_ms()
-        if ticks_diff(now_ticks, next_service) < 0:
-            continue
-        next_service = ticks_add(now_ticks, settings.SERVICE_INTERVAL_MS)
+        net.service(now)
+        time_sync.service(net.connected)
+        for w in widgets:
+            w.service(now, ctx)
 
-        rtc_changed = boot.service(now_ticks)
-        providers.service(now_ticks, boot)
-        module_changed = rotator.service(now_ticks, providers, boot)
+        second = now // 1000
+        if second != last_second:
+            net.update_status_led(second, time_sync.synced)
+            last_second = second
 
-        sec = (now_ticks // 1000) & 0x3FFFFFFF
-        if sec != last_second:
-            boot.update_status_led(sec)
-            last_second = sec
+        rotator.service(now, ctx)
+        widget = rotator.current(ctx)
 
-        module = rotator.current(providers, boot)
-        module_name = getattr(module, "name", "")
-        provider_changed = providers.revision != last_provider_revision
+        if widget is not current:
+            wait = _switch(display, widget, ctx, fade and current is not None)
+            current = widget
+            next_draw = ticks_add(ticks_ms(), wait)
+        elif (ticks_diff(now, next_draw) >= 0
+              or widget.revision != last_widget_revision
+              or time_sync.revision != last_time_revision):
+            wait = _draw(display, widget, ctx)
+            next_draw = ticks_add(now, wait)
 
-        minute_changed = False
-        if module_name == "clock":
-            try:
-                current_minute = time.time() // 60
-            except Exception:
-                current_minute = last_clock_minute
-            minute_changed = current_minute != last_clock_minute
-        else:
-            current_minute = last_clock_minute
+        last_widget_revision = widget.revision
+        last_time_revision = time_sync.revision
 
-        need_render = (
-            force_redraw
-            or rtc_changed
-            or module_changed
-            or provider_changed
-            or (module_name != last_module_name)
-            or minute_changed
-        )
-
-        if not need_render:
-            continue
-
-        now = time.localtime()
-        text = module.render(now, providers, boot)
-        if not text:
-            text = "--:--"
-
-        if force_redraw or rtc_changed or module_changed or text != last_text:
-            display.show_text(text)
-            last_text = text
-            force_redraw = False
-
-        if module_name == "clock":
-            last_clock_minute = current_minute
-        last_provider_revision = providers.revision
-        last_module_name = module_name
+        sleep = ticks_diff(next_draw, ticks_ms())
+        if sleep > max_sleep:
+            sleep = max_sleep
+        if sleep > 0:
+            time.sleep_ms(sleep)
 
 
 def run():
