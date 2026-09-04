@@ -29,6 +29,10 @@
 #define HUB75_RGB_PINS 6
 #define HUB75_MAX_ROW_PINS 5
 
+// Brightness is a linear duty cycle: 0 = dark, HUB75_BRIGHTNESS_MAX = as
+// bright as the timing allows.  Perceptual (gamma) scaling is the caller's job.
+#define HUB75_BRIGHTNESS_MAX 65535u
+
 typedef enum {
     HUB75_OK = 0,
     HUB75_ERR_NOT_INITIALIZED,
@@ -39,6 +43,7 @@ typedef enum {
     HUB75_ERR_CLK_HALF_CYCLES,
     HUB75_ERR_CLKDIV,
     HUB75_ERR_TIMING,
+    HUB75_ERR_BRIGHTNESS,
     HUB75_ERR_GPIO,
     HUB75_ERR_PINS_NOT_DISTINCT,
     HUB75_ERR_BUFFER_SIZE,
@@ -71,7 +76,8 @@ typedef struct {
     uint32_t oe_guard_ns;               // blanking before the latch pulse
     uint32_t latch_ns;                  // latch pulse width and latch settle time
     uint32_t addr_ns;                   // settle time after a row address change
-    uint32_t on_time_us;                // lit time per row after switching it on
+    uint32_t on_time_us;                // time budget per row for lit + dark phase
+    uint32_t brightness;                // 0..HUB75_BRIGHTNESS_MAX, linear duty
 } hub75_config_t;
 
 // Derived values for diagnostics.
@@ -83,6 +89,9 @@ typedef struct {
     uint32_t frame_us;                  // nominal frame period
     uint32_t frame_words;               // words in one frame's DMA stream
     uint32_t on_time_us;
+    uint32_t brightness;
+    uint32_t lit_cycles;                // PIO cycles per row with OE on
+    bool lit_during_shift;              // row stays lit while the next one is shifted in
     int pio_index;
     int sm;
     int dma_data;
@@ -99,18 +108,20 @@ hub75_result_t hub75_init(const hub75_config_t *cfg);
 // to software control.  Safe to call when not initialised.
 void hub75_deinit(void);
 
-bool hub75_is_initialized(void);
+// Show a new frame.  pixels holds width * (2 * scan_rows) bytes in row-major
+// order, one byte per pixel: bit 0 = red, bit 1 = green, bit 2 = blue, other
+// bits ignored.  Rows 0 .. scan_rows-1 are the upper panel half (R1/G1/B1),
+// the rest the lower half (R2/G2/B2).  Returns once the DMA has switched to
+// the new frame (about one frame time).
+hub75_result_t hub75_show(const uint8_t *pixels, size_t n_bytes);
 
-// Show a new frame.  scan_words holds width * scan_rows words, one per
-// (scan row, column): the absolute GPIO mask of the RGB pins that are on.
-// Returns once the DMA has switched to the new frame (about one frame time).
-hub75_result_t hub75_show(const uint32_t *scan_words, size_t n_words);
-
-// Show a blank frame.
-hub75_result_t hub75_clear(void);
-
-// Change the lit time per row on the fly (brightness and refresh rate).
+// Change the per-row time budget on the fly (refresh rate; brightness keeps
+// its relative level).  Tear-free: takes effect at the next frame boundary.
 hub75_result_t hub75_set_on_time_us(uint32_t on_time_us);
+
+// Change the brightness (0..HUB75_BRIGHTNESS_MAX, linear duty) on the fly.
+// The refresh rate does not change.  Tear-free, about one frame time.
+hub75_result_t hub75_set_brightness(uint32_t brightness);
 
 hub75_result_t hub75_get_stats(hub75_stats_t *out);
 

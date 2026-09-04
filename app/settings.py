@@ -16,10 +16,15 @@ CLK_PIN = 11
 LAT_PIN = 12
 OE_PIN = 13
 
-# Leuchtdauer pro Zeile nach dem Umschalten (us). Zusaetzlich bleibt die Zeile
-# waehrend des Einschiebens der naechsten Zeile an. Bestimmt Helligkeit und
-# Bildwiederholrate: 16 Zeilen * (32 us + ~4.5 us) -> ca. 1.7 kHz.
+# Zeitbudget pro Zeile (us), das zwischen Leucht- und Dunkelphase aufgeteilt
+# wird. Bestimmt die Bildwiederholrate: 16 Zeilen * (32 us + ~4.6 us) -> ca. 1.7 kHz.
 ON_TIME_US = 32
+
+# Helligkeit 0.0..1.0 (wahrgenommen). Wird mit BRIGHTNESS_GAMMA in eine lineare
+# Leuchtdauer umgerechnet, damit Rampen (fade_to) gleichmaessig wirken.
+BRIGHTNESS = 1.0
+BRIGHTNESS_GAMMA = 2.2
+FADE_STEP_MS = 16
 
 # Native Scan-Engine (PIO + DMA, laeuft ohne CPU-Beteiligung).
 # Timing-Werte entsprechen dem Waveshare/JuPfu-Referenztreiber.
@@ -45,6 +50,7 @@ CPU_FREQ_HZ = 250_000_000
 WLAN_PM_PERF = 0xA11140
 
 TEXT_SCALE = 2
+TEXT_COLOR = 7   # Farbindex: Bit 0 rot, Bit 1 gruen, Bit 2 blau -> 7 = weiss
 UTC_OFFSET_HOURS = 2
 
 NTP_HOST = "192.168.178.1"

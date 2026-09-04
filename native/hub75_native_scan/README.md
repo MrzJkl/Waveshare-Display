@@ -71,21 +71,28 @@ Sequenz fuer eine Scanzeile, wie diese Engine sie faehrt:
 2. OE = 1                                        Panel dunkel (Guard, 60 ns)
 3. LAT = 1, dann LAT = 0                         Daten in die Latches (120 ns Puls, 120 ns Settle)
 4. Adresse A..D = neue Zeile                     Zeilentreiber umschalten (200 ns Settle)
-5. OE = 0                                        neue Zeile leuchtet fuer ON_TIME_US (32 us)
+5. OE = 0                                        neue Zeile leuchtet (Leuchtphase)
+6. OE = 1                                        Dunkelphase; 5 + 6 zusammen = ON_TIME_US (32 us)
    -> zurueck zu 1 fuer die naechste Zeile
 ```
+
+Bei voller Helligkeit bleibt die Zeile auch in Schritt 1 an und die Dunkelphase ist minimal. Zum
+Dimmen wandert Zeit von Schritt 5 nach Schritt 6, und unterhalb einer Schwelle ist auch Schritt 1
+dunkel. Die Zeilendauer bleibt dabei immer gleich (Kapitel 5, "Helligkeit").
 
 Als Zeitdiagramm (nicht massstaeblich):
 
 ```
-        |<------ 1: 64 Pixel einschieben ------>| 2 | 3     | 4    |<------- 5: leuchten ------->|
+        |<------ 1: 64 Pixel einschieben ------>| 2 | 3     | 4    |<----- 5: leuchten ----->| 6  |
 RGB   --< p0 >< p1 >< p2 > ...... < p63 >-----------------------------------------------------------
 CLK   __/--\__/--\__/--\__ ...... /--\______________________________________________________________
 LAT   _________________________________________/-----\______________________________________________
 A..D  ====== Adresse n-1 ==============================|====== Adresse n ===========================
-OE    ______________________________________/------------------\____________________________________
-        leuchtet: Zeile n-1                    dunkel            leuchtet: Zeile n
+OE    ______________________________________/------------------\_________________________/--------
+        leuchtet: Zeile n-1                    dunkel            leuchtet: Zeile n          dunkel
 ```
+
+(Volle Helligkeit: Schritt 6 ist dann nur drei Takte lang.)
 
 Zwei Dinge sind fuer ein sauberes Bild entscheidend:
 
@@ -154,7 +161,7 @@ Das Programm (in `hub75_pio.c` zur Laufzeit kodiert, weil der CLK-Takt konfiguri
 pixel:
     out pins, 32 [3]   side 0     ; Pixelwort auf RGB/Adresse/LAT/OE, CLK low   (4 Takte Setup)
     jmp x-- pixel [3]  side 1     ; CLK high, Panel uebernimmt die Daten         (4 Takte Hold)
-; fuenf Steuerphasen, jede:
+; sechs Steuerphasen, jede:
     out pins, 32       side 0     ; Pin-Zustand (OE, LAT, Adresse)
     out x, 32          side 0     ; Wartezaehler nach X
 phase:
@@ -162,7 +169,7 @@ phase:
 .wrap
 ```
 
-Insgesamt 18 Instruktionen. Pro Pixel 8 Takte = 64 ns, also 15.6 MHz Pixeltakt. Das entspricht dem
+Insgesamt 21 Instruktionen. Pro Pixel 8 Takte = 64 ns, also 15.6 MHz Pixeltakt. Das entspricht dem
 Waveshare-Beispiel (`SM_CLOCKDIV_FACTOR = 2`), das ebenfalls 8 bis 9 Takte pro Pixel braucht.
 
 Wie kommt ein Wort auf 14 Pins? Die OUT-Pingruppe der SM beginnt beim niedrigsten Panel-Pin
@@ -179,29 +186,42 @@ Pro Scanzeile erzeugt `hub75_stream.c` diesen Block (das Format ist als Vertrag 
 | Index | Wort | Bedeutung |
 | --- | --- | --- |
 | 0 | `width - 1` | Schleifenzaehler fuer die Pixel |
-| 1 .. 64 | Pixelwoerter | RGB-Bits des Pixels, Adresse der **vorigen** Zeile, LAT = 0, OE = 0 |
+| 1 .. 64 | Pixelwoerter | RGB-Bits des Pixels, Adresse der **vorigen** Zeile, LAT = 0, OE je nach Helligkeit |
 | 65, 66 | Phase 0 | Pin-Zustand OE = 1; Wartezaehler fuer `oe_guard_ns` |
 | 67, 68 | Phase 1 | OE = 1, LAT = 1; Wartezaehler fuer `latch_ns` |
 | 69, 70 | Phase 2 | OE = 1, LAT = 0; Wartezaehler fuer `latch_ns` |
 | 71, 72 | Phase 3 | OE = 1, neue Adresse; Wartezaehler fuer `addr_ns` |
-| 73, 74 | Phase 4 | OE = 0, neue Adresse; Wartezaehler fuer `on_time_us` |
+| 73, 74 | Phase 4 | OE = 0, neue Adresse; Wartezaehler = Leuchtanteil des Budgets |
+| 75, 76 | Phase 5 | OE = 1, neue Adresse; Wartezaehler = Dunkelanteil des Budgets |
 
-75 Woerter pro Zeile, 16 Zeilen = 1200 Woerter = 4.8 KB pro Frame.
+77 Woerter pro Zeile, 16 Zeilen = 1232 Woerter = 4.9 KB pro Frame.
 
 Warum tragen die Pixelwoerter die Adresse der *vorigen* Zeile? Weil waehrend des Einschiebens noch
-die vorige Zeile leuchtet (OE = 0). Wuerde die Adresse schon wechseln, saehe man Ghosting. Erst in
-Phase 3, bei dunklem Panel, wechselt die Adresse. Dieses Ueberlappen ("Pipelining") sorgt dafuer,
-dass das Panel fast 99 % der Zeit leuchtet: dunkel ist es nur in den Phasen 0 bis 3, zusammen etwa
-0.5 us pro Zeile.
+die vorige Zeile angezeigt wird. Wuerde die Adresse schon wechseln, saehe man Ghosting. Erst in
+Phase 3, bei dunklem Panel, wechselt die Adresse. Bei voller Helligkeit bleibt die Zeile waehrend
+des Einschiebens an ("Pipelining"): dunkel ist das Panel dann nur in den Phasen 0 bis 3 und der
+minimalen Phase 5, zusammen etwa 0.6 us pro Zeile.
+
+**Helligkeit.** `on_time_us` ist ein Zeitbudget, das `split_budget()` in `hub75_stream.c` zwischen
+Phase 4 (leuchten) und Phase 5 (dunkel) aufteilt. Die Summe ist konstant, also aendert Dimmen weder
+Zeilendauer noch Bildrate. Die maximale Leuchtzeit ist Einschieben + Budget; solange die gewuenschte
+Leuchtzeit groesser als das Einschieben ist, bleibt OE in den Pixelwoertern an und Phase 4 wird
+gekuerzt. Darunter tragen die Pixelwoerter OE = 1 und nur Phase 4 leuchtet. Bei Helligkeit 0 traegt
+auch das Phase-4-Wort OE = 1. Die Skala (0..65535) ist ein linearer Tastgrad; die wahrgenommene
+Helligkeit rechnet `display.py` mit Gamma 2.2 um. Eine Aenderung kopiert den angezeigten Frame in
+den Hintergrundpuffer, schreibt dort nur die Steuerwoerter und das OE-Bit der Pixelwoerter neu und
+veroeffentlicht ihn (`hub75_stream_apply_control()`), also ohne Tearing.
 
 Die Wartezaehler sind PIO-Takte. Eine Phase dauert `Zaehler + 3` Takte (`out pins`, `out x` und
 der letzte Schleifendurchlauf). `hub75_stream_compute_timing()` rechnet die Nanosekunden aus
 `settings.py` in Takte um, rundet auf und zieht die 3 ab.
 
-Die Pixelwoerter entstehen aus den `scan_words`, die Python liefert: pro (Scanzeile, Spalte) eine
-GPIO-Maske der eingeschalteten RGB-Pins (obere Haelfte R1/G1/B1, untere Haelfte R2/G2/B2). Die
-Engine schiebt die Maske um `out_base` nach rechts, maskiert auf die RGB-Bits und ergaenzt Adresse
-und Steuerbits.
+Die Pixelwoerter entstehen aus dem Framebuffer, den Python liefert: `width * height` Bytes, ein
+Farbindex pro Pixel (Bit 0 rot, Bit 1 gruen, Bit 2 blau). Fuer Scanzeile `r` liest die Engine das
+Byte aus Bildzeile `r` (obere Haelfte) und aus Bildzeile `r + scan_rows` (untere Haelfte) und
+schlaegt beide in einer Tabelle nach: `colour_top[]` liefert die R1/G1/B1-Bits, `colour_bot[]` die
+R2/G2/B2-Bits. Dazu kommen Adresse und Steuerbits. Das Byte-Format ist genau das von
+`framebuf.GS8`, deshalb kann `display.py` den Puffer ohne Umweg uebergeben.
 
 ## 6. Die DMA-Kette
 
@@ -254,10 +274,11 @@ Mit den Defaults aus `settings.py` und 250 MHz CPU-Takt:
 | Phase 0 (Guard) | ceil(60 ns / 8 ns) | 8 Takte |
 | Phasen 1, 2 (Latch) | ceil(120 / 8) | je 15 Takte |
 | Phase 3 (Adresse) | ceil(200 / 8) | 25 Takte |
-| Phase 4 (leuchten) | 32 us / 8 ns | 4000 Takte |
+| Phasen 4 + 5 (Budget) | 32 us / 8 ns | 4000 Takte, bei voller Helligkeit 3997 + 3 |
 | Zeile | Summe | 4576 Takte = 36.6 us |
 | Frame | 16 Zeilen | 586 us, also 1707 Hz |
-| Leuchtanteil | (4000 + 513) / 4576 | 98.6 % |
+| Leuchtanteil bei voller Helligkeit | (512 + 3997) / 4576 | 98.5 % |
+| Leuchtanteil bei 25 % Tastgrad | 0.25 * 4509 / 4576 | 24.6 %, Phase 4 = 1127 Takte, Einschieben dunkel |
 
 `stats()` liefert diese Werte fuer die tatsaechliche Konfiguration, `measure_frame_rate()` misst
 die reale Bildrate am DMA-Lesezeiger (gemessen: 1708 Hz).
@@ -287,9 +308,9 @@ Python-API (siehe auch die Haupt-README):
 | Funktion | Zweck |
 | --- | --- |
 | `init(width, scan_rows, r1, g1, b1, r2, g2, b2, row_base_pin, row_n_pins, clk_pin, lat_pin, oe_pin, *, on_time_us=32, pio_clkdiv=2.0, clk_half_cycles=4, oe_guard_ns=60, latch_ns=120, addr_ns=200)` | Refresh starten, Panel zunaechst dunkel |
-| `swap_scan_words(words)` | neuen Frame anzeigen (`array('I')`, `width * scan_rows` Woerter) |
-| `clear()` | Panel dunkel schalten |
-| `set_on_time_us(us)` | Leuchtdauer pro Zeile zur Laufzeit aendern |
+| `show_frame(buf)` | neuen Frame anzeigen: `width * height` Bytes, ein Farbindex pro Pixel |
+| `set_brightness(level)` | Helligkeit 0..65535 (linearer Tastgrad) bei konstanter Bildrate |
+| `set_on_time_us(us)` | Zeitbudget pro Zeile aendern (Bildrate) |
 | `stats()` | Dict mit PIO/DMA-Zuordnung, Pixeltakt, Zeilen- und Frame-Zeit |
 | `measure_frame_rate(ms=200)` | gemessene Bildwiederholrate in Hz |
 | `is_running()` | `True`, solange die DMA-Kette laeuft |
@@ -303,7 +324,7 @@ Python-API (siehe auch die Haupt-README):
 | Schwache Geisterzeilen ober-/unterhalb | Zeilentreiber beim Einschalten noch am Umschalten | `NATIVE_ADDR_NS` erhoehen (z. B. 400) |
 | Helle Nachbarpixel, Schmieren | Guards vor/nach dem Latch zu kurz | `NATIVE_OE_GUARD_NS`, `NATIVE_LATCH_NS` erhoehen |
 | Verschobene oder zufaellige Pixel | Pixeltakt zu schnell fuer Kabel und Panel | `NATIVE_PIO_CLKDIV` erhoehen (3.0) oder `NATIVE_CLK_HALF_CYCLES` (6) |
-| Zu dunkel oder zu hell | Leuchtdauer | `ON_TIME_US`, zur Laufzeit `set_on_time_us()` |
+| Zu dunkel oder zu hell | Helligkeit | `BRIGHTNESS` in `settings.py`, zur Laufzeit `display.set_brightness()` |
 | Panel dunkel, `init()` ohne Fehler | OE-Pin, Stecker, oder `machine.Pin` auf Panel-Pins | Pinbelegung in `settings.py` pruefen, keine Pins doppelt nutzen |
 | `RuntimeError: hub75: no free PIO state machine` | PIO-Speicher oder SMs belegt (z. B. `rp2.StateMachine`) | andere PIO-Nutzer pruefen; das Modul probiert alle PIO-Bloecke |
 
@@ -312,11 +333,11 @@ Zeiten muessen den Werten aus Kapitel 7 entsprechen.
 
 ## 10. Ideen fuer Erweiterungen
 
-- **Helligkeit bei konstanter Bildrate:** eine sechste Phase mit OE = 1 nach der Leuchtphase, so
-  dass `leuchten + dunkel` konstant bleibt (wie im Referenztreiber). Aenderung nur im Wortstrom und
-  im PIO-Programm (drei Instruktionen mehr).
-- **Farben und Graustufen:** mehrere Bitplanes pro Zeile mit unterschiedlich langer Leuchtphase
-  (Binary Code Modulation). Der Wortstrom wird pro Zeile mehrfach mit anderen Pixelwoertern und
-  anderem `on_time` aufgebaut; PIO und DMA bleiben unveraendert.
+- **Sanfte Uebergaenge zwischen Anzeigen:** `display.fade_to(0.0)`, neuen Frame zeigen,
+  `display.fade_to(1.0)`. Die Helligkeitsaenderung kostet pro Schritt etwa eine Frame-Zeit.
+- **Graustufen und Mischfarben:** mehrere Bitplanes pro Zeile mit unterschiedlich langer
+  Leuchtphase (Binary Code Modulation). Der Wortstrom wird pro Zeile mehrfach mit anderen
+  Pixelwoertern und anderem Budget aufgebaut; PIO und DMA bleiben unveraendert. Heute gibt es die
+  acht Grundfarben (ein Bit pro Kanal).
 - **Groessere Panels oder Ketten:** `width` = Gesamtbreite der Kette, `scan_rows` und `row_n_pins`
   anpassen, Grenzen `HUB75_MAX_*` beim Build erhoehen (`-DHUB75_MAX_WIDTH=256`).

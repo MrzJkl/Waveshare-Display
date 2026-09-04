@@ -2,8 +2,9 @@
 //
 // Pure data work, no hardware registers.  This file answers one question:
 // which 32-bit words must the state machine see so that one scan row is
-// shifted in, latched, addressed and lit correctly?  The word layout is the
-// contract in hub75_internal.h; the program that consumes it is in hub75_pio.c.
+// shifted in, latched, addressed and lit for the right time?  The word layout
+// is the contract in hub75_internal.h; the program that consumes it is in
+// hub75_pio.c.
 
 #include <string.h>
 
@@ -40,6 +41,40 @@ static uint32_t phase_count(uint32_t cycles) {
     return cycles > HUB75_PHASE_FIXED_CYCLES ? cycles - HUB75_PHASE_FIXED_CYCLES : 0;
 }
 
+// Split the per-row time budget between the lit phase 4 and the dark phase 5
+// according to the brightness, and decide whether the row also stays lit
+// while the next row is shifted in.  The total row length never changes.
+static void split_budget(hub75_t *st) {
+    const uint32_t fixed = HUB75_PHASE_FIXED_CYCLES;
+    const uint32_t budget = st->budget_cycles;              // >= 2 * fixed
+    const uint32_t max_lit = st->shift_cycles + budget - fixed;   // all but guards and a minimal dark phase
+
+    uint32_t target = (uint32_t)(((uint64_t)max_lit * st->cfg.brightness + HUB75_BRIGHTNESS_MAX / 2u) / HUB75_BRIGHTNESS_MAX);
+
+    // Prefer to keep the row lit during the shift (the pipelined maximum
+    // brightness mode) and trim phase 4; below that, blank the shift and let
+    // phase 4 alone provide the light.
+    uint32_t lit;   // length of phase 4 in cycles, fixed part included
+    if (target >= st->shift_cycles + fixed) {
+        st->lit_during_shift = true;
+        lit = target - st->shift_cycles;
+    } else {
+        st->lit_during_shift = false;
+        lit = target;
+    }
+    if (lit > budget - fixed) {
+        lit = budget - fixed;           // small budgets: keep a minimal dark phase
+    }
+    st->lit_phase_dark = (lit == 0);    // brightness 0: phase 4 runs with OE off
+    if (lit < fixed) {
+        lit = fixed;                    // a phase cannot be shorter than its fixed cost
+    }
+
+    st->phase_counts[HUB75_PHASE_LIT] = lit - fixed;
+    st->phase_counts[HUB75_PHASE_DARK] = budget - lit - fixed;
+    st->lit_cycles = (st->lit_during_shift ? st->shift_cycles : 0) + (st->lit_phase_dark ? 0 : lit);
+}
+
 void hub75_stream_compute_timing(hub75_t *st) {
     const hub75_config_t *cfg = &st->cfg;
 
@@ -49,10 +84,16 @@ void hub75_stream_compute_timing(hub75_t *st) {
     st->phase_counts[HUB75_PHASE_LATCH_HIGH] = phase_count(ns_to_cycles(st->pio_hz, cfg->latch_ns));
     st->phase_counts[HUB75_PHASE_LATCH_LOW] = phase_count(ns_to_cycles(st->pio_hz, cfg->latch_ns));
     st->phase_counts[HUB75_PHASE_ADDRESS] = phase_count(ns_to_cycles(st->pio_hz, cfg->addr_ns));
-    st->phase_counts[HUB75_PHASE_LIT] = phase_count(us_to_cycles(st->pio_hz, cfg->on_time_us));
 
-    // One row: the counter word, 2 * clk_half_cycles per pixel, then the phases.
-    uint64_t cycles = 1u + (uint64_t)cfg->width * 2u * cfg->clk_half_cycles;
+    st->shift_cycles = 2u * cfg->clk_half_cycles * cfg->width;
+    st->budget_cycles = us_to_cycles(st->pio_hz, cfg->on_time_us);
+    if (st->budget_cycles < 2u * HUB75_PHASE_FIXED_CYCLES) {
+        st->budget_cycles = 2u * HUB75_PHASE_FIXED_CYCLES;
+    }
+    split_budget(st);
+
+    // One row: the counter word, the pixel loop, then the six phases.
+    uint64_t cycles = 1u + (uint64_t)st->shift_cycles;
     for (uint32_t i = 0; i < HUB75_CTRL_PHASES; i++) {
         cycles += (uint64_t)st->phase_counts[i] + HUB75_PHASE_FIXED_CYCLES;
     }
@@ -75,65 +116,85 @@ uint32_t hub75_stream_row_address_word(const hub75_t *st, uint32_t row) {
     return word;
 }
 
-// Build the block for one scan row.
-//   dst    row_words entries
-//   src    width words of absolute GPIO masks (RGB pins that are on), or NULL for a dark row
-//   blank  keep OE off during the whole block (start-up prologue)
-void hub75_stream_build_row(const hub75_t *st, uint32_t *dst, const uint32_t *src, uint32_t row, bool blank) {
-    const uint32_t width = st->cfg.width;
+// OE bit for the pixel words: on while shifting only in the pipelined mode.
+static uint32_t shift_oe_bits(const hub75_t *st, bool blank) {
+    return (st->lit_during_shift && !blank) ? 0 : st->oe_word;
+}
+
+// The 2 * HUB75_CTRL_PHASES control words that follow the pixel words of `row`.
+static void write_control_words(const hub75_t *st, uint32_t *ctrl, uint32_t row, bool blank) {
     const uint32_t prev_row = (row == 0) ? st->cfg.scan_rows - 1 : row - 1;
     const uint32_t addr_prev = hub75_stream_row_address_word(st, prev_row);
     const uint32_t addr_new = hub75_stream_row_address_word(st, row);
     const uint32_t oe_off = st->oe_word;            // OE is active low: bit set = LEDs off
     const uint32_t lat = st->lat_word;
-    const uint32_t oe_lit = blank ? oe_off : 0;
+    const uint32_t oe_lit = (st->lit_phase_dark || blank) ? oe_off : 0;
+
+    size_t i = 0;
+    ctrl[i++] = addr_prev | oe_off;
+    ctrl[i++] = st->phase_counts[HUB75_PHASE_BLANK];
+    ctrl[i++] = addr_prev | oe_off | lat;
+    ctrl[i++] = st->phase_counts[HUB75_PHASE_LATCH_HIGH];
+    ctrl[i++] = addr_prev | oe_off;
+    ctrl[i++] = st->phase_counts[HUB75_PHASE_LATCH_LOW];
+    ctrl[i++] = addr_new | oe_off;
+    ctrl[i++] = st->phase_counts[HUB75_PHASE_ADDRESS];
+    ctrl[i++] = addr_new | oe_lit;
+    ctrl[i++] = blank ? 0 : st->phase_counts[HUB75_PHASE_LIT];
+    ctrl[i++] = addr_new | oe_off;
+    ctrl[i++] = blank ? 0 : st->phase_counts[HUB75_PHASE_DARK];
+}
+
+// Build the block for one scan row.
+//   dst       row_words entries
+//   top, bot  width bytes each: colour index (bits 0..2 = R, G, B) of the pixel
+//             in the upper and the lower panel half, or NULL for a dark row
+//   blank     keep OE off during the whole block (start-up prologue)
+void hub75_stream_build_row(const hub75_t *st, uint32_t *dst, const uint8_t *top, const uint8_t *bot, uint32_t row, bool blank) {
+    const uint32_t width = st->cfg.width;
+    const uint32_t prev_row = (row == 0) ? st->cfg.scan_rows - 1 : row - 1;
+
+    // Pixel words: RGB bits of both halves, address of the previous row (still
+    // displayed while we shift), LAT low, OE as the brightness mode dictates.
+    const uint32_t pixel_ctrl = hub75_stream_row_address_word(st, prev_row) | shift_oe_bits(st, blank);
 
     size_t i = 0;
     dst[i++] = width - 1;
-
-    // Pixel words: RGB bits of this row, address of the previous row (still
-    // lit while we shift), LAT low, OE on.
-    const uint32_t pixel_ctrl = addr_prev | oe_lit;
-    if (src != NULL) {
-        const uint32_t shift = st->out_base;
-        const uint32_t mask = st->rgb_word_mask;
+    if (top != NULL && bot != NULL) {
         for (uint32_t x = 0; x < width; x++) {
-            dst[i++] = ((src[x] >> shift) & mask) | pixel_ctrl;
+            dst[i++] = st->colour_top[top[x] & 7u] | st->colour_bot[bot[x] & 7u] | pixel_ctrl;
         }
     } else {
         for (uint32_t x = 0; x < width; x++) {
             dst[i++] = pixel_ctrl;
         }
     }
-
-    // Control phases as (pin state, delay counter) pairs, see hub75_internal.h.
-    dst[i++] = addr_prev | oe_off;
-    dst[i++] = st->phase_counts[HUB75_PHASE_BLANK];
-    dst[i++] = addr_prev | oe_off | lat;
-    dst[i++] = st->phase_counts[HUB75_PHASE_LATCH_HIGH];
-    dst[i++] = addr_prev | oe_off;
-    dst[i++] = st->phase_counts[HUB75_PHASE_LATCH_LOW];
-    dst[i++] = addr_new | oe_off;
-    dst[i++] = st->phase_counts[HUB75_PHASE_ADDRESS];
-    dst[i++] = addr_new | oe_lit;
-    dst[i++] = blank ? 0 : st->phase_counts[HUB75_PHASE_LIT];
+    write_control_words(st, dst + i, row, blank);
 }
 
-void hub75_stream_build_frame(const hub75_t *st, uint32_t *dst, const uint32_t *src) {
+// pixels: width * 2 * scan_rows bytes, upper half first, or NULL for a dark frame.
+void hub75_stream_build_frame(const hub75_t *st, uint32_t *dst, const uint8_t *pixels) {
+    const size_t width = st->cfg.width;
     for (uint32_t row = 0; row < st->cfg.scan_rows; row++) {
-        const uint32_t *src_row = (src != NULL) ? src + (size_t)row * st->cfg.width : NULL;
-        hub75_stream_build_row(st, dst + (size_t)row * st->row_words, src_row, row, false);
+        const uint8_t *top = pixels ? pixels + (size_t)row * width : NULL;
+        const uint8_t *bot = pixels ? pixels + ((size_t)row + st->cfg.scan_rows) * width : NULL;
+        hub75_stream_build_row(st, dst + (size_t)row * st->row_words, top, bot, row, false);
     }
 }
 
-// The lit counter is the last word of every row block.  Rewriting it in place
-// is safe: the DMA reads each word once per frame as an aligned 32-bit access,
-// so it sees either the old or the new value, never a mix.
-void hub75_stream_update_on_time(const hub75_t *st) {
-    for (uint32_t b = 0; b < 2; b++) {
-        uint32_t *buf = hub75_buffers[b];
-        for (uint32_t row = 0; row < st->cfg.scan_rows; row++) {
-            buf[(size_t)row * st->row_words + st->row_words - 1] = st->phase_counts[HUB75_PHASE_LIT];
+// Rewrite everything in a built frame that depends on timing and brightness
+// (the OE bit of the pixel words and all control words) and keep the pixels.
+// Used after set_brightness / set_on_time_us on a copy of the frame on screen.
+void hub75_stream_apply_control(const hub75_t *st, uint32_t *dst) {
+    const uint32_t width = st->cfg.width;
+    const uint32_t oe_off = st->oe_word;
+    const uint32_t oe_shift = shift_oe_bits(st, false);
+
+    for (uint32_t row = 0; row < st->cfg.scan_rows; row++) {
+        uint32_t *block = dst + (size_t)row * st->row_words;
+        for (uint32_t x = 1; x <= width; x++) {
+            block[x] = (block[x] & ~oe_off) | oe_shift;
         }
+        write_control_words(st, block + 1 + width, row, false);
     }
 }

@@ -22,22 +22,35 @@
 //   width + 3, 4   phase 1: pin state, delay     LAT high (latch pulse)
 //   width + 5, 6   phase 2: pin state, delay     LAT low, latch settle
 //   width + 7, 8   phase 3: pin state, delay     new row address, row driver settle
-//   width + 9, 10  phase 4: pin state, delay     OE on, row lit for on_time_us
+//   width + 9, 10  phase 4: pin state, delay     OE on: lit part of the time budget
+//   width + 11, 12 phase 5: pin state, delay     OE off: dark part of the time budget
 //
 // Pin state words: bit (gpio - out_base) is the level of that GPIO.  The OUT
 // pin group of the state machine spans out_base .. out_base + out_count - 1,
 // so one "out pins, 32" sets RGB, address, LAT and OE together.  CLK is driven
 // by side-set and is always 0 in the words.
 //
-// Pixel words carry the address of the PREVIOUS row and OE on: while row n is
-// shifted into the panel's shift registers, row n-1 is still displayed from
-// the output latches.  Only phase 3 (panel blanked) switches the address.
+// Pixel words are built from the caller's frame (one byte per pixel, bits
+// 0..2 = R, G, B) with two lookup tables: colour_top[] maps the byte of the
+// upper-half pixel to the R1/G1/B1 bits, colour_bot[] the lower-half pixel to
+// the R2/G2/B2 bits.
+//
+// Pixel words carry the address of the PREVIOUS row: while row n is shifted
+// into the panel's shift registers, row n-1 is still displayed from the
+// output latches.  Only phase 3 (panel blanked) switches the address.
+//
+// Brightness: on_time_us is a time budget per row that is split between the
+// lit phase 4 and the dark phase 5, so the row period and the refresh rate do
+// not depend on brightness.  At high brightness the row additionally stays
+// lit while the next row is shifted in (pixel words carry OE on); below that
+// point the pixel words carry OE off and only phase 4 lights the row.  At
+// brightness 0 the phase 4 word carries OE off as well.
 //
 // Delay words: loop counter N; the phase lasts N + HUB75_PHASE_FIXED_CYCLES
 // PIO cycles ("out pins" + "out x" + the last loop iteration).
 // ---------------------------------------------------------------------------
 
-#define HUB75_CTRL_PHASES 5
+#define HUB75_CTRL_PHASES 6
 #define HUB75_ROW_WORDS(width) (1u + (width) + 2u * HUB75_CTRL_PHASES)
 #define HUB75_MAX_FRAME_WORDS (HUB75_MAX_SCAN_ROWS * HUB75_ROW_WORDS(HUB75_MAX_WIDTH))
 #define HUB75_PHASE_FIXED_CYCLES 3u
@@ -48,6 +61,7 @@ enum hub75_phase {
     HUB75_PHASE_LATCH_LOW,
     HUB75_PHASE_ADDRESS,
     HUB75_PHASE_LIT,
+    HUB75_PHASE_DARK,
 };
 
 typedef struct {
@@ -62,13 +76,19 @@ typedef struct {
     uint32_t out_base;
     uint32_t out_count;
     uint32_t all_pins_mask;     // absolute GPIO mask of every panel pin
-    uint32_t rgb_word_mask;
+    uint32_t colour_top[8];     // colour index -> R1/G1/B1 word bits
+    uint32_t colour_bot[8];     // colour index -> R2/G2/B2 word bits
     uint32_t lat_word;
     uint32_t oe_word;
 
     // Timing derived from cfg and the system clock.
     uint32_t pio_hz;
     uint32_t phase_counts[HUB75_CTRL_PHASES];
+    uint32_t shift_cycles;      // pixel loop cycles per row
+    uint32_t budget_cycles;     // phase 4 + phase 5 together (from on_time_us)
+    bool lit_during_shift;      // pixel words carry OE on
+    bool lit_phase_dark;        // brightness 0: phase 4 word carries OE off too
+    uint32_t lit_cycles;        // cycles per row with OE on (diagnostics)
     uint32_t row_cycles;
     uint32_t frame_us;
 
@@ -91,9 +111,9 @@ typedef struct {
 uint32_t *hub75_stream_buffer(uint32_t index);
 void hub75_stream_compute_timing(hub75_t *st);
 uint32_t hub75_stream_row_address_word(const hub75_t *st, uint32_t row);
-void hub75_stream_build_row(const hub75_t *st, uint32_t *dst, const uint32_t *src, uint32_t row, bool blank);
-void hub75_stream_build_frame(const hub75_t *st, uint32_t *dst, const uint32_t *src);
-void hub75_stream_update_on_time(const hub75_t *st);
+void hub75_stream_build_row(const hub75_t *st, uint32_t *dst, const uint8_t *top, const uint8_t *bot, uint32_t row, bool blank);
+void hub75_stream_build_frame(const hub75_t *st, uint32_t *dst, const uint8_t *pixels);
+void hub75_stream_apply_control(const hub75_t *st, uint32_t *dst);
 
 // hub75_pio.c
 bool hub75_pio_start(hub75_t *st);

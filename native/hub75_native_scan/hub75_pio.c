@@ -11,15 +11,16 @@
 //   pixel:
 //       out pins, 32 [h-1]   side 0    ; pixel word -> RGB, address, LAT, OE; CLK low (setup)
 //       jmp x-- pixel [h-1]  side 1    ; CLK high: the panel samples the data (hold)
-//   ; HUB75_CTRL_PHASES times:
+//   ; HUB75_CTRL_PHASES (six) times:
 //       out pins, 32         side 0    ; pin state word
 //       out x, 32            side 0    ; delay counter -> X
 //   phase:
 //       jmp x-- phase        side 0    ; spin X + 1 cycles
 //   .wrap                              ; back to the top, free of charge
 //
-// h = clk_half_cycles, so one pixel takes 2 * h cycles.  The program is
-// assembled at runtime with pio_encode_* because h is a configuration value.
+// h = clk_half_cycles, so one pixel takes 2 * h cycles.  21 instructions in
+// total.  The program is assembled at runtime with pio_encode_* because h is
+// a configuration value.
 //
 // Pin groups of the state machine:
 //   OUT       out_base .. out_base + out_count - 1: RGB, address, LAT, OE and any
