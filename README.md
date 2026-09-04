@@ -32,6 +32,8 @@ native/
     micropython.cmake
 tools/
   generate_wifi_config.sh
+  brightness_demo.py
+  run_brightness_demo.sh
 wifi_config.example.py
 README.md
 .gitignore
@@ -48,6 +50,7 @@ README.md
 - [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul, das das Panel komplett in Hardware (PIO + DMA) refresht. Aufbau und Funktionsweise sind in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md) erklaert.
 - [manifest.py](manifest.py): Frozen-Manifest fuer den Build.
 - [tools/generate_wifi_config.sh](tools/generate_wifi_config.sh): erzeugt lokale [wifi_config.py](wifi_config.py) aus Env-Variablen.
+- [tools/brightness_demo.py](tools/brightness_demo.py) / [tools/run_brightness_demo.sh](tools/run_brightness_demo.sh): visuelle Testsequenz fuer Helligkeit und Fading (laeuft per `mpremote run`, nichts wird geflasht).
 - [wifi_config.example.py](wifi_config.example.py): Vorlage fuer lokale WLAN-Konfiguration.
 
 ## Architektur
@@ -61,9 +64,12 @@ README.md
   das Panel dunkel wird oder flackert. Das ist dasselbe Prinzip wie im Waveshare-/JuPfu-Referenztreiber.
 - **Frame-Wechsel:** doppelt gepuffert. `swap_scan_words()` baut den neuen Frame im Hintergrundpuffer
   und veroeffentlicht ihn; der DMA uebernimmt ihn an der naechsten Frame-Grenze (kein Tearing).
-- **Zeilen-Sequenz** (pro Scanzeile, Timing aus `settings.py`): naechste Zeile einschieben, waehrend
-  die aktuelle noch leuchtet -> OE aus (Guard) -> LAT-Puls -> Latch-Settle -> neue Zeilenadresse ->
-  Adress-Settle -> OE an fuer `ON_TIME_US`.
+- **Zeilen-Sequenz** (pro Scanzeile, Timing aus `settings.py`): naechste Zeile einschieben ->
+  OE aus (Guard) -> LAT-Puls -> Latch-Settle -> neue Zeilenadresse -> Adress-Settle -> Leuchtphase ->
+  Dunkelphase. Leucht- und Dunkelphase teilen sich das Budget `ON_TIME_US`.
+- **Helligkeit:** `display.set_brightness(0.0..1.0)` verschiebt die Grenze zwischen Leucht- und
+  Dunkelphase; die Bildrate bleibt konstant, die Aenderung landet an der naechsten Frame-Grenze.
+  `display.fade_to(level, ms)` rampt weich (Baustein fuer sanfte Widget-Wechsel).
 - **Boot/Infra:** WLAN/NTP/LED, kein Zeichnen.
 - **Module:** liefern nur Anzeige-Text und koennen beliebig erweitert werden.
 - **Runtime:** schlaeft zwischen Service-Laeufen (`LOOP_IDLE_MS`) und rotiert Module alle paar Sekunden.
@@ -74,10 +80,11 @@ Damit kannst du spaeter leicht z. B. Wetter, HomeAssistant oder Kalender als eig
 
 | Funktion | Zweck |
 | --- | --- |
-| `init(width, scan_rows, r1, g1, b1, r2, g2, b2, row_base_pin, row_n_pins, clk_pin, lat_pin, oe_pin, *, on_time_us=32, pio_clkdiv=2.0, clk_half_cycles=4, oe_guard_ns=60, latch_ns=120, addr_ns=200)` | startet den autonomen Refresh (Panel zunaechst dunkel) |
+| `init(width, scan_rows, r1, g1, b1, r2, g2, b2, row_base_pin, row_n_pins, clk_pin, lat_pin, oe_pin, *, on_time_us=32, pio_clkdiv=2.0, clk_half_cycles=4, oe_guard_ns=60, latch_ns=120, addr_ns=200, brightness=65535)` | startet den autonomen Refresh (Panel zunaechst dunkel) |
 | `swap_scan_words(words)` | neuen Frame anzeigen (`array('I')`, `width * scan_rows` Woerter) |
 | `clear()` | Panel dunkel schalten |
-| `set_on_time_us(us)` | Leuchtdauer pro Zeile zur Laufzeit aendern (Helligkeit/Refresh) |
+| `set_brightness(level)` | Helligkeit 0..65535 (linearer Tastgrad) bei konstanter Bildrate |
+| `set_on_time_us(us)` | Zeitbudget pro Zeile aendern (Bildrate) |
 | `stats()` | Dict mit PIO/DMA-Zuordnung, Pixeltakt, Zeilen-/Frame-Zeit |
 | `measure_frame_rate(ms=200)` | gemessene Bildwiederholrate in Hz (Diagnose) |
 | `is_running()` | `True`, solange der DMA-Loop laeuft |
@@ -89,7 +96,10 @@ Grenzen: `MAX_WIDTH = 128`, `MAX_SCAN_ROWS = 32` (statische Puffer, ca. 36 KB RA
 
 | Setting | Default | Bedeutung |
 | --- | --- | --- |
-| `ON_TIME_US` | 32 | Leuchtdauer pro Zeile nach dem Umschalten; 16 Zeilen -> ca. 1.7 kHz Refresh |
+| `ON_TIME_US` | 32 | Zeitbudget pro Zeile fuer Leucht- + Dunkelphase; 16 Zeilen -> ca. 1.7 kHz Refresh |
+| `BRIGHTNESS` | 1.0 | wahrgenommene Helligkeit 0.0..1.0 beim Start |
+| `BRIGHTNESS_GAMMA` | 2.2 | Umrechnung wahrgenommen -> Tastgrad, damit Rampen gleichmaessig wirken |
+| `FADE_STEP_MS` | 16 | Schrittweite von `fade_to()` |
 | `NATIVE_PIO_CLKDIV` | 2.0 | PIO-Takt = CPU-Takt / clkdiv (wie `SM_CLOCKDIV_FACTOR` im Waveshare-Beispiel) |
 | `NATIVE_CLK_HALF_CYCLES` | 4 | PIO-Zyklen pro CLK-Halbperiode -> Pixeltakt 250 MHz / 2 / 8 = 15.6 MHz |
 | `NATIVE_OE_GUARD_NS` | 60 | Dunkelphase vor dem Latch (`BASE_OE_NS`) |
@@ -138,6 +148,17 @@ mpremote reset   # danach main.py wieder starten
 
 Achtung: `mpremote soft-reset` startet `main.py` nicht (Soft-Reset im Raw-REPL laeuft ohne
 `main.py`). Zum Neustart `mpremote reset` verwenden oder im `mpremote repl` Strg-D druecken.
+
+5. Helligkeit und Fading am Panel pruefen (ca. 60 s, danach startet `main.py` automatisch neu):
+
+```bash
+./tools/run_brightness_demo.sh
+```
+
+Das Skript [tools/brightness_demo.py](tools/brightness_demo.py) spielt acht Tests ab (Treppe, langsamer
+Fade, Atmen, sanfter und harter Textwechsel, Ruhetest gedimmt) und schreibt zu jedem auf die Konsole,
+was auf dem Panel zu sehen sein soll. Wirken die unteren Stufen zu dunkel oder zu hell, `GAMMA` im
+Skript aendern und den passenden Wert nach `BRIGHTNESS_GAMMA` in `settings.py` uebernehmen.
 
 Hinweis: `wifi_config.py` ist absichtlich nicht versioniert.
 

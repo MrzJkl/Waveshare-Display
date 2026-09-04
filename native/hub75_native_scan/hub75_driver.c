@@ -31,6 +31,7 @@ static const char *const result_text[HUB75_RESULT_COUNT] = {
     [HUB75_ERR_CLK_HALF_CYCLES] = "clk_half_cycles must be 1..16",
     [HUB75_ERR_CLKDIV] = "pio_clkdiv must be 1.0..65535",
     [HUB75_ERR_TIMING] = "timing value out of range",
+    [HUB75_ERR_BRIGHTNESS] = "brightness must be 0..65535",
     [HUB75_ERR_GPIO] = "invalid GPIO number",
     [HUB75_ERR_PINS_NOT_DISTINCT] = "pins must be distinct",
     [HUB75_ERR_BUFFER_SIZE] = "scan_words buffer size mismatch",
@@ -98,6 +99,9 @@ static hub75_result_t validate(const hub75_config_t *cfg) {
     if (cfg->oe_guard_ns > HUB75_MAX_GUARD_NS || cfg->latch_ns > HUB75_MAX_GUARD_NS ||
         cfg->addr_ns > HUB75_MAX_GUARD_NS || cfg->on_time_us > HUB75_MAX_ON_TIME_US) {
         return HUB75_ERR_TIMING;
+    }
+    if (cfg->brightness > HUB75_BRIGHTNESS_MAX) {
+        return HUB75_ERR_BRIGHTNESS;
     }
 
     uint32_t pins[HUB75_RGB_PINS + HUB75_MAX_ROW_PINS + 3];
@@ -232,6 +236,16 @@ hub75_result_t hub75_clear(void) {
     return HUB75_OK;
 }
 
+// Timing or brightness changed: copy the frame on screen into the back buffer,
+// rewrite its control words and publish it.  Pixels stay, no tearing, and the
+// change lands at the next frame boundary.
+static void republish_control(hub75_t *st) {
+    const uint32_t back = st->front ^ 1u;
+    memcpy(st->buffers[back], st->buffers[st->front], st->frame_words * sizeof(uint32_t));
+    hub75_stream_apply_control(st, st->buffers[back]);
+    hub75_dma_publish(st, back);
+}
+
 hub75_result_t hub75_set_on_time_us(uint32_t on_time_us) {
     hub75_t *st = &hub75;
     if (!st->initialized) {
@@ -242,7 +256,21 @@ hub75_result_t hub75_set_on_time_us(uint32_t on_time_us) {
     }
     st->cfg.on_time_us = on_time_us;
     hub75_stream_compute_timing(st);
-    hub75_stream_update_on_time(st);
+    republish_control(st);
+    return HUB75_OK;
+}
+
+hub75_result_t hub75_set_brightness(uint32_t brightness) {
+    hub75_t *st = &hub75;
+    if (!st->initialized) {
+        return HUB75_ERR_NOT_INITIALIZED;
+    }
+    if (brightness > HUB75_BRIGHTNESS_MAX) {
+        return HUB75_ERR_BRIGHTNESS;
+    }
+    st->cfg.brightness = brightness;
+    hub75_stream_compute_timing(st);
+    republish_control(st);
     return HUB75_OK;
 }
 
@@ -267,6 +295,9 @@ hub75_result_t hub75_get_stats(hub75_stats_t *out) {
     out->frame_us = st->frame_us;
     out->frame_words = st->frame_words;
     out->on_time_us = st->cfg.on_time_us;
+    out->brightness = st->cfg.brightness;
+    out->lit_cycles = st->lit_cycles;
+    out->lit_during_shift = st->lit_during_shift;
     out->pio_index = (int)pio_get_index(st->pio);
     out->sm = st->sm;
     out->dma_data = st->dma_data;

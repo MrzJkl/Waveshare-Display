@@ -8,6 +8,7 @@ itself via PIO + DMA. See native/hub75_native_scan/README.md for how.
 """
 
 import array
+import time
 
 from app import settings
 
@@ -67,6 +68,7 @@ class Hub75Display:
         self.scan_rows = settings.SCAN_ROWS
         self.text_scale = settings.TEXT_SCALE
         self.on_time_us = settings.ON_TIME_US
+        self.brightness = self._clamp(settings.BRIGHTNESS)
 
         self.front_frame = bytearray(self.width * self.height)
         self.back_frame = bytearray(self.width * self.height)
@@ -98,6 +100,7 @@ class Hub75Display:
             oe_guard_ns=settings.NATIVE_OE_GUARD_NS,
             latch_ns=settings.NATIVE_LATCH_NS,
             addr_ns=settings.NATIVE_ADDR_NS,
+            brightness=self._duty(self.brightness),
         )
         print("hub75 native scan:", self._native.stats())
 
@@ -107,6 +110,42 @@ class Hub75Display:
     def set_on_time_us(self, value):
         self.on_time_us = value
         self._native.set_on_time_us(value)
+
+    # ------------------------------------------------------------------
+    # Brightness
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _clamp(level):
+        return 0.0 if level < 0.0 else 1.0 if level > 1.0 else float(level)
+
+    @staticmethod
+    def _duty(level):
+        """Perceived level 0.0..1.0 -> linear duty 0..BRIGHTNESS_MAX for the engine."""
+        return int((level ** settings.BRIGHTNESS_GAMMA) * hub75_native_scan.BRIGHTNESS_MAX + 0.5)
+
+    def set_brightness(self, level):
+        """Set the perceived brightness (0.0 dark .. 1.0 full).
+
+        Takes effect at the next frame boundary, the refresh rate stays the
+        same, and the call returns after about one frame time.
+        """
+        self.brightness = self._clamp(level)
+        self._native.set_brightness(self._duty(self.brightness))
+
+    def fade_to(self, level, duration_ms=300):
+        """Blocking ramp of the perceived brightness to `level`.
+
+        Building block for soft transitions: fade_to(0.0), show the next
+        frame, fade_to(1.0). Steps every FADE_STEP_MS.
+        """
+        target = self._clamp(level)
+        start = self.brightness
+        step_ms = settings.FADE_STEP_MS
+        steps = max(1, duration_ms // step_ms)
+        for i in range(1, steps + 1):
+            self.set_brightness(start + (target - start) * i / steps)
+            if i < steps:
+                time.sleep_ms(step_ms)
 
     def clear(self):
         self._native.clear()
