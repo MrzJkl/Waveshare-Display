@@ -27,6 +27,8 @@ app/
     bus/widget.py
     pegel/widget.py
     pegel/icons.py
+    dwd/widget.py
+    dwd/icons.py
 native/
   hub75_native_scan/
     README.md
@@ -58,7 +60,7 @@ README.md
 - [app/shared/timezone.py](app/shared/timezone.py): Zeitzonen mit lokal berechneter Sommerzeitregel (EU), z. B. `Europe/Berlin` = CET/CEST.
 - [app/shared/mqtt.py](app/shared/mqtt.py): gemeinsamer MQTT-Client (umqtt.simple) mit Reconnect, Keepalive-Watchdog und Wertespeicher; Widgets melden Topics an und lesen die letzten Werte.
 - [app/shared/hass.py](app/shared/hass.py): HomeAssistant-Schicht darueber: Entity-IDs zu Statestream-Topics, typisierter Zugriff (`state`, `state_float`, `attribute`).
-- [app/widgets](app/widgets): ein Ordner pro Widget: [clock](app/widgets/clock/widget.py) (taktische Uhr), [weather](app/widgets/weather/widget.py) (Wetter-Dashboard aus einer HomeAssistant-weather-Entity, Icons in [icons.py](app/widgets/weather/icons.py)), [bus](app/widgets/bus/widget.py) (Abfahrtstafel aus HomeAssistant-Abfahrtssensoren: Linie, Minuten, Verspaetung), [pegel](app/widgets/pegel/widget.py) (Wasserstand als animierte Wasserflaeche mit Hochwassermarken und Trendpfeil). [base.py](app/widgets/base.py) beschreibt den Lebenszyklus, [widgets/__init__.py](app/widgets/__init__.py) die Rotation.
+- [app/widgets](app/widgets): ein Ordner pro Widget: [clock](app/widgets/clock/widget.py) (taktische Uhr), [weather](app/widgets/weather/widget.py) (Wetter-Dashboard aus einer HomeAssistant-weather-Entity, Icons in [icons.py](app/widgets/weather/icons.py)), [bus](app/widgets/bus/widget.py) (Abfahrtstafel aus HomeAssistant-Abfahrtssensoren: Linie, Minuten, Verspaetung), [pegel](app/widgets/pegel/widget.py) (Wasserstand als animierte Wasserflaeche mit Hochwassermarken und Trendpfeil), [dwd](app/widgets/dwd/widget.py) (DWD-Warnstufe mit Warndreieck, blendet sich nur bei Warnung ein). [base.py](app/widgets/base.py) beschreibt den Lebenszyklus, [widgets/__init__.py](app/widgets/__init__.py) die Rotation.
 - [app/runtime.py](app/runtime.py): Hauptschleife: Dienste, `service()` aller Widgets, Rotation mit Fade, Zeichnen genau dann, wenn das Widget es will oder seine Daten sich aendern.
 - [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul, das das Panel komplett in Hardware (PIO + DMA) refresht. Aufbau und Funktionsweise sind in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md) erklaert.
 - [manifest.py](manifest.py): Frozen-Manifest fuer den Build.
@@ -92,7 +94,10 @@ README.md
   Datumszeile gelb.
 - **Widgets:** reines Python, ein Ordner pro Widget. `service(now, ctx)` wird fuer alle Widgets in jedem
   Schleifendurchlauf gerufen (Daten holen, nicht blockieren, `self.revision` erhoehen, wenn sich etwas
-  geaendert hat). `draw(display, ctx)` zeichnet einen kompletten Frame auf `display.fb` und gibt zurueck,
+  geaendert hat). `is_ready(ctx)` steuert die **bedingte Sichtbarkeit**: `False` nimmt das Widget komplett
+  aus der Rotation, `True` bringt es zurueck. So erscheint z. B. das DWD-Widget nur bei einer Warnung und
+  die Abfahrtstafel nur, wenn Abfahrten anstehen. Mindestens ein Widget muss immer sichtbar bleiben, das
+  uebernimmt die Uhr. `draw(display, ctx)` zeichnet einen kompletten Frame auf `display.fb` und gibt zurueck,
   in wie vielen Millisekunden es wieder gezeichnet werden will (die Uhr: bis zur naechsten
   Sekundengrenze). `ctx` liefert Netz (`ctx.net`), Zeit (`ctx.time`), MQTT (`ctx.mqtt`) und
   HomeAssistant (`ctx.hass`).
@@ -159,6 +164,9 @@ Die Herleitung der Werte und eine Symptom-Tabelle stehen in [native/hub75_native
 | `PEGEL_MARKS`, `PEGEL_WARN_CM`, `PEGEL_ALARM_CM` | 620 gelb, 750 rot | gestrichelte Hochwassermarken; ab `WARN` Zahl gelb, ab `ALARM` rot und blinkend. **Werte fuer den Pegel Bonn pruefen** |
 | `PEGEL_TREND_WINDOW_MS`, `PEGEL_TREND_MIN_CM` | 3 h, 2 cm | Zeitfenster und Schwelle fuer den Trendpfeil |
 | `PEGEL_WAVE_MS`, `PEGEL_WATER_COLOR`, `PEGEL_SURFACE_COLOR` | 160 ms, blau, cyan | Tempo der Wellenanimation und Farben |
+| `DWD_CURRENT_ENTITY`, `DWD_PREWARN_ENTITY` | Stadt Bonn | Sensoren fuer aktuelle Warnstufe und Vorwarnstufe |
+| `DWD_ALWAYS_SHOW` | aus | aus: Widget erscheint nur bei Warnung oder Vorwarnung; an: zeigt auch "KEINE WARNUNG" |
+| `DWD_BLINK_LEVEL`, `DWD_LEVEL_COLORS` | 3, 1 gelb / 2 orange / 3 rot / 4 magenta | ab dieser Stufe blinkt das Dreieck; Farbe je Stufe (Panel hat kein Orange, `(1, 3)` ist ein Rot/Gelb-Schachbrett) |
 
 ## Schnellstart
 

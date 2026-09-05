@@ -6,8 +6,15 @@ class Widget:
                                while another widget is on screen. Fetch or
                                update data here, never block, and bump
                                self.revision when what you would draw changed.
-      is_ready(ctx)            whether there is something meaningful to show;
-                               the rotation skips widgets that are not ready.
+      is_ready(ctx)            conditional visibility. Return False and the
+                               rotation skips the widget entirely, so a widget
+                               can appear only while it has something to say (a
+                               warning is active, data has arrived, a threshold
+                               is exceeded). The answer may change at any time:
+                               the runtime switches away from a widget that
+                               stops being ready and picks it up again once it
+                               returns True. At least one widget has to stay
+                               ready at all times, which is what the clock does.
       draw(display, ctx)       draw a complete frame on display.fb and return
                                the milliseconds until the next draw (the clock
                                returns the time to the next second boundary).

@@ -98,6 +98,17 @@ PEGEL_WATER_COLOR = 4          # blau
 PEGEL_SURFACE_COLOR = 6        # cyan
 PEGEL_NUMBER_COLOR = 7         # weiss
 
+# DWD-Warnstufen-Widget: zwei HomeAssistant-Sensoren (aktuelle Stufe und Vorwarnstufe)
+DWD_CURRENT_ENTITY = "sensor.stadt_bonn_aktuelle_warnstufe"
+DWD_PREWARN_ENTITY = "sensor.stadt_bonn_vorwarnstufe"
+DWD_ALWAYS_SHOW = False        # True: auch bei Stufe 0 zeigen ("KEINE WARNUNG")
+DWD_BLINK_LEVEL = 3            # ab dieser Stufe blinkt das Warndreieck
+# DWD-Warnstufen: 1 gelb, 2 orange, 3 rot, 4 dunkelrot. Auf dem Panel gibt es
+# kein Orange und kein Dunkelrot: (1, 3) ist ein Rot/Gelb-Schachbrett, Stufe 4 magenta.
+DWD_LEVEL_COLORS = {1: 3, 2: (1, 3), 3: 1, 4: 5}
+DWD_OK_COLOR = 2               # gruen fuer "keine Warnung"
+DWD_TEXT_COLOR = 7             # weiss
+
 # Uhr-Widget
 CLOCK_TIME_COLOR = 7           # weiss
 CLOCK_DATE_COLOR = 1           # rot (gelb, wenn der letzte Zeitabgleich aelter als TIME_STALE_MS ist)
