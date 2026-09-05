@@ -27,6 +27,8 @@ BLUE = 4
 MAGENTA = 5
 CYAN = 6
 WHITE = 7
+# A (a, b) pair of colours is drawn as a checkerboard of both and blends into a
+# mixed colour on the panel, e.g. (RED, YELLOW) for orange; see font.py.
 
 
 class Hub75Display:
@@ -101,9 +103,9 @@ class Hub75Display:
     def clear(self, colour=BLACK):
         self.fb.fill(colour)
 
-    def text(self, text, x, y, colour=WHITE, scale=1, background=None, font=None):
+    def text(self, text, x, y, colour=WHITE, scale=1, background=None, font=None, bold=False):
         """Draw text with its top-left corner at (x, y); returns the x after it."""
-        return (font or self.font).draw(self.fb, text, x, y, colour, scale, background)
+        return (font or self.font).draw(self.fb, text, x, y, colour, scale, background, bold)
 
     def text_center(self, text, colour=WHITE, scale=None, y=None, font=None):
         """Draw text horizontally centred; vertically centred unless y is given."""

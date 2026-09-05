@@ -66,6 +66,22 @@ WEATHER_TEMP_COLOR = 7         # weiss
 WEATHER_HUMIDITY_COLOR = 6     # cyan
 WEATHER_WIND_COLOR = 7         # weiss
 
+# Bus-Widget: HomeAssistant-Abfahrtssensoren (eine Entity pro Linie und Richtung)
+BUS_ENTITIES = (
+    "sensor.bonn_endenich_euskirchener_str_606_bonn_ramersdorf",
+    "sensor.bonn_endenich_euskirchener_str_607_bonn_ramersdorf",
+    "sensor.bonn_endenich_euskirchener_str_608_bonn_holzlar_gielgen",
+    "sensor.bonn_endenich_euskirchener_str_609_bonn_holzlar_gielgen",
+    "sensor.bonn_endenich_euskirchener_str_n2_bonn_hbf",
+    "sensor.bonn_endenich_euskirchener_str_n6_bonn_hbf",
+)
+BUS_ROWS = 4
+# Farbe der Liniennummer wie auf den echten Anzeigen. (1, 3) = Rot/Gelb-Schachbrett, wirkt orange.
+BUS_LINE_COLORS = {"606": 2, "607": 2, "608": (1, 3), "609": (1, 3), "N2": 7, "N6": 7}
+BUS_LINE_COLOR = 7             # weiss, fuer Linien ohne Eintrag in BUS_LINE_COLORS
+BUS_MINUTES_COLOR = 7          # weiss
+BUS_DELAY_RED_MIN = 5          # ab so vielen Minuten Verspaetung rot statt gelb
+
 # Uhr-Widget
 CLOCK_TIME_COLOR = 7           # weiss
 CLOCK_DATE_COLOR = 1           # rot (gelb, wenn der letzte Zeitabgleich aelter als TIME_STALE_MS ist)
