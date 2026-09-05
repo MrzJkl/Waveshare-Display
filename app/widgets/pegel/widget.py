@@ -3,8 +3,8 @@
 The panel is a tank: water rises from the bottom, its height scaled between
 PEGEL_MIN_CM and PEGEL_MAX_CM. The surface ripples (two interfering integer
 sine tables, one pixel of travel per animation step), the body is blue with a
-cyan crest. Flood marks are drawn as dashed lines across the water, so the
-current level can be read against them at a glance.
+cyan crest. The warn and alarm levels are drawn as dashed lines across the
+water, so the current level can be read against them at a glance.
 
 The value in cm sits in the middle in large digits, followed by the unit and a
 trend arrow (nothing when the level is steady; the arrow sits behind the unit
@@ -133,7 +133,7 @@ class PegelWidget(Widget):
 
     def _draw_marks(self, display):
         fb = display.fb
-        for mark_cm, colour in settings.PEGEL_MARKS:
+        for mark_cm, colour in ((settings.PEGEL_WARN_CM, YELLOW), (settings.PEGEL_ALARM_CM, RED)):
             height = self._level_height(mark_cm)
             if height <= 0 or height >= 32:
                 continue            # outside the scale

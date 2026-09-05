@@ -19,6 +19,8 @@ app/
     timesync.py
     mqtt.py
     hass.py
+    config.py
+    web.py
   widgets/
     base.py
     clock/widget.py
@@ -60,6 +62,8 @@ README.md
 - [app/shared/timezone.py](app/shared/timezone.py): Zeitzonen mit lokal berechneter Sommerzeitregel (EU), z. B. `Europe/Berlin` = CET/CEST.
 - [app/shared/mqtt.py](app/shared/mqtt.py): gemeinsamer MQTT-Client (umqtt.simple) mit Reconnect, Keepalive-Watchdog und Wertespeicher; Widgets melden Topics an und lesen die letzten Werte.
 - [app/shared/hass.py](app/shared/hass.py): HomeAssistant-Schicht darueber: Entity-IDs zu Statestream-Topics, typisierter Zugriff (`state`, `state_float`, `attribute`).
+- [app/shared/config.py](app/shared/config.py): im Betrieb aenderbare Optionen (Whitelist mit Typ und Wertebereich), gespeichert als `settings_override.json` auf dem Geraet und beim Start ueber die Firmware-Defaults gelegt.
+- [app/shared/web.py](app/shared/web.py): kleiner nicht blockierender Webserver, der Status und diese Optionen im Browser anbietet.
 - [app/widgets](app/widgets): ein Ordner pro Widget: [clock](app/widgets/clock/widget.py) (taktische Uhr), [weather](app/widgets/weather/widget.py) (Wetter-Dashboard aus einer HomeAssistant-weather-Entity, Icons in [icons.py](app/widgets/weather/icons.py)), [bus](app/widgets/bus/widget.py) (Abfahrtstafel aus HomeAssistant-Abfahrtssensoren: Linie, Minuten, Verspaetung), [pegel](app/widgets/pegel/widget.py) (Wasserstand als animierte Wasserflaeche mit Hochwassermarken und Trendpfeil), [dwd](app/widgets/dwd/widget.py) (DWD-Warnstufe mit Warndreieck, blendet sich nur bei Warnung ein). [base.py](app/widgets/base.py) beschreibt den Lebenszyklus, [widgets/__init__.py](app/widgets/__init__.py) die Rotation.
 - [app/runtime.py](app/runtime.py): Hauptschleife: Dienste, `service()` aller Widgets, Rotation mit Fade, Zeichnen genau dann, wenn das Widget es will oder seine Daten sich aendern.
 - [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul, das das Panel komplett in Hardware (PIO + DMA) refresht. Aufbau und Funktionsweise sind in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md) erklaert.
@@ -107,6 +111,20 @@ README.md
   wird mit `ctx.hass.state_float(...)` usw. Verbindungsabbrueche behandelt der Client selbst.
 - **Runtime:** ruft die Dienste auf, rotiert Widgets alle `WIDGET_ROTATE_MS` mit Aus-/Einblenden
   (`TRANSITION_MS`) und schlaeft sonst bis zum naechsten Zeichenzeitpunkt.
+- **Konfiguration im Betrieb:** Der Pico oeffnet einen kleinen Webserver (Adresse steht im Boot-Log,
+  z. B. `http://192.168.178.162/`). Dort lassen sich Helligkeit, aktive Widgets, Wechselzeit, Farben und
+  Schwellwerte aendern; die meisten Werte greifen mit dem naechsten Bild, nur wenige brauchen einen
+  Neustart (in der Seite markiert). Geaenderte Werte landen als `settings_override.json` auf dem
+  Geraete-Dateisystem und werden beim Start ueber die Defaults aus `settings.py` gelegt, ein Flashen ist
+  dafuer also nicht noetig. Gespeichert werden nur echte Abweichungen, damit spaetere Aenderungen an den
+  Defaults weiter wirken. "Werkseinstellungen" loescht die Datei und startet neu. Aenderbar ist nur die
+  Whitelist in [config.py](app/shared/config.py): Zugangsdaten stehen nicht darin und erscheinen nicht
+  auf der Seite. Es gibt **keine Anmeldung**, jeder im Netz kann die Anzeige umstellen und neu starten;
+  `WEB_ENABLED = False` schaltet den Server ab.
+- **Display an und aus:** `/on`, `/off` und `/toggle` (GET oder POST) schalten das Panel dunkel bzw.
+  hell. "Aus" heisst Helligkeit null: die Scan-Engine laeuft weiter, das Einschalten ist sofort da und
+  wird weich eingeblendet. Der Zustand wird gespeichert, ein Reboot bleibt also aus. `/status` liefert
+  denselben Zustand als JSON.
 
 Damit kannst du spaeter leicht z. B. Wetter, HomeAssistant oder Kalender als eigene Widgets einhaengen.
 
@@ -167,6 +185,8 @@ Die Herleitung der Werte und eine Symptom-Tabelle stehen in [native/hub75_native
 | `DWD_CURRENT_ENTITY`, `DWD_PREWARN_ENTITY` | Stadt Bonn | Sensoren fuer aktuelle Warnstufe und Vorwarnstufe |
 | `DWD_ALWAYS_SHOW` | aus | aus: Widget erscheint nur bei Warnung oder Vorwarnung; an: zeigt auch "KEINE WARNUNG" |
 | `DWD_BLINK_LEVEL`, `DWD_LEVEL_COLORS` | 3, 1 gelb / 2 orange / 3 rot / 4 magenta | ab dieser Stufe blinkt das Dreieck; Farbe je Stufe (Panel hat kein Orange, `(1, 3)` ist ein Rot/Gelb-Schachbrett) |
+| `WIDGETS_ENABLED` | alle | Widgets in der Rotation; leere Liste = alle (so kann die Weboberflaeche das Panel nicht leer schalten) |
+| `WEB_ENABLED`, `WEB_PORT` | an, 80 | Webserver fuer die Konfiguration im Betrieb |
 
 ## Schnellstart
 
@@ -200,7 +220,10 @@ mpremote bootloader
 cp /home/moritz/micropython/ports/rp2/build-RPI_PICO2_W-min/firmware.uf2 /run/media/$USER/RP2350/
 ```
 
-4. Pruefen (unterbricht `main.py`, das Panel laeuft dank Hardware-Refresh weiter):
+4. Adresse der Weboberflaeche steht im Boot-Log (`web: http://.../`); dort Helligkeit, aktive Widgets,
+   Farben und Schwellwerte im Browser aendern, ohne neu zu flashen.
+
+5. Pruefen (unterbricht `main.py`, das Panel laeuft dank Hardware-Refresh weiter):
 
 ```bash
 mpremote exec "import hub75_native_scan as h; print(h.stats()); print(h.measure_frame_rate(500))"
@@ -210,7 +233,7 @@ mpremote reset   # danach main.py wieder starten
 Achtung: `mpremote soft-reset` startet `main.py` nicht (Soft-Reset im Raw-REPL laeuft ohne
 `main.py`). Zum Neustart `mpremote reset` verwenden oder im `mpremote repl` Strg-D druecken.
 
-5. Am Panel pruefen (Testsequenzen, danach startet `main.py` automatisch neu):
+6. Am Panel pruefen (Testsequenzen, danach startet `main.py` automatisch neu):
 
 ```bash
 ./tools/run_demo.sh brightness   # Helligkeit und Fading, ca. 60 s
@@ -237,6 +260,36 @@ mqtt_statestream:
 
 `base_topic` muss zu `HASS_BASE_TOPIC` in `settings.py` passen. Welche Topics ankommen, zeigt
 `mosquitto_sub -h <HA-IP> -u display -P '...' -t 'statestream/#' -v`.
+
+### Display aus HomeAssistant schalten
+
+In `configuration.yaml` (Adresse anpassen):
+
+```yaml
+rest_command:
+  display_ein:
+    url: "http://192.168.178.162/on"
+    method: post
+  display_aus:
+    url: "http://192.168.178.162/off"
+    method: post
+
+binary_sensor:
+  - platform: rest
+    name: LED Display
+    resource: "http://192.168.178.162/status"
+    value_template: "{{ value_json.display_on }}"
+    scan_interval: 60
+```
+
+Damit laesst sich das Display in Automationen mit `rest_command.display_aus` bzw. `display_ein`
+schalten, und der Zustand ist als `binary_sensor.led_display` lesbar. Zum Testen von der Kommandozeile:
+
+```bash
+curl -X POST http://192.168.178.162/off
+curl -X POST http://192.168.178.162/on
+curl -s http://192.168.178.162/status
+```
 
 ## Neues Widget hinzufuegen
 

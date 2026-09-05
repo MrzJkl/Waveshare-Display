@@ -22,6 +22,16 @@ class WifiService:
     def connected(self):
         return self.wlan.isconnected()
 
+    @property
+    def address(self):
+        """Own IP address, or None while not connected."""
+        if not self.wlan.isconnected():
+            return None
+        try:
+            return self.wlan.ifconfig()[0]
+        except OSError:
+            return None
+
     def service(self, now_ticks):
         if self.connected or time.ticks_diff(now_ticks, self.next_try) < 0:
             return

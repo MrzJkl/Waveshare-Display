@@ -20,6 +20,11 @@ OE_PIN = 13
 # wird. Bestimmt die Bildwiederholrate: 16 Zeilen * (32 us + ~4.6 us) -> ca. 1.7 kHz.
 ON_TIME_US = 32
 
+# Display an oder aus. "Aus" bedeutet Helligkeit null: die Scan-Engine laeuft
+# weiter, das Panel ist dunkel, das Einschalten ist sofort da. Schaltbar per
+# Weboberflaeche und ueber die Webhooks /on, /off und /toggle.
+DISPLAY_ON = True
+
 # Helligkeit 0.0..1.0 (wahrgenommen). Wird mit BRIGHTNESS_GAMMA in eine lineare
 # Leuchtdauer umgerechnet, damit Rampen (fade_to) gleichmaessig wirken.
 BRIGHTNESS = 1.0
@@ -39,6 +44,14 @@ NATIVE_ADDR_NS = 200           # Settle nach Zeilenadresswechsel vor OE (BASE_AD
 LOOP_MAX_SLEEP_MS = 50
 WIDGET_ROTATE_MS = 15000       # Widget-Wechsel; 0 = nur das erste Widget zeigen
 TRANSITION_MS = 400            # Aus-/Einblenden beim Widget-Wechsel; 0 = hart
+# Widgets in der Rotation (Namen aus app/widgets); leer = alle. Ein Widget kann
+# sich zusaetzlich selbst ausblenden, siehe is_ready() in app/widgets/base.py.
+WIDGETS_ENABLED = ("clock", "weather", "dwd", "bus", "pegel")
+
+# Kleiner Webserver zum Aendern von Optionen im Betrieb (app/shared/web.py).
+# Ohne Anmeldung: jeder im Netz kann Farben aendern und neu starten.
+WEB_ENABLED = True
+WEB_PORT = 80
 
 WIFI_RETRY_MS = 15000
 WLAN_PM_PERF = 0xA11140
@@ -86,11 +99,10 @@ BUS_DELAY_RED_MIN = 5          # ab so vielen Minuten Verspaetung rot statt gelb
 PEGEL_ENTITY = "sensor.rhein_pegel_bonn_wasserstand"
 PEGEL_MIN_CM = 0               # unteres Ende der Skala (kein Wasser im Bild)
 PEGEL_MAX_CM = 800             # oberes Ende (Bild voll); so liegen beide Marken auf der Skala
-# Gestrichelte Marken (cm, Farbe) und Farbwechsel der Zahl. Die Hochwassermarken
-# fuer den Pegel Bonn bitte pruefen und hier eintragen (Quelle: PEGELONLINE / HochwasserPortal).
-PEGEL_MARKS = ((620, 3), (750, 1))
-PEGEL_WARN_CM = 620            # ab hier Zahl gelb
-PEGEL_ALARM_CM = 750           # ab hier Zahl rot und blinkend
+# Hochwassermarken: gestrichelte Linien im Bild und Farbwechsel der Zahl.
+# Werte fuer den Pegel Bonn bitte pruefen (Quelle: PEGELONLINE / HochwasserPortal).
+PEGEL_WARN_CM = 620            # gelbe Marke, ab hier Zahl gelb
+PEGEL_ALARM_CM = 750           # rote Marke, ab hier Zahl rot und blinkend
 PEGEL_TREND_WINDOW_MS = 3 * 60 * 60 * 1000   # Zeitfenster fuer den Trendpfeil
 PEGEL_TREND_MIN_CM = 2         # ab dieser Aenderung gilt der Pegel als steigend/fallend
 PEGEL_WAVE_MS = 160            # Schrittweite der Wellenanimation
@@ -133,3 +145,11 @@ MQTT_HOST = getattr(_local, "MQTT_HOST", "")       # leer = MQTT aus
 MQTT_PORT = getattr(_local, "MQTT_PORT", 1883)
 MQTT_USER = getattr(_local, "MQTT_USER", "")
 MQTT_PASSWORD = getattr(_local, "MQTT_PASSWORD", "")
+
+# Zuletzt: Optionen, die im Betrieb per Webserver geaendert wurden, ueberschreiben
+# die Defaults von oben (settings_override.json auf dem Geraet, app/shared/config.py).
+try:
+    from app.shared import config as _config
+    _config.apply(globals())
+except Exception as _exc:      # ohne Overrides startet die App trotzdem
+    print("settings: overrides not applied:", _exc)
