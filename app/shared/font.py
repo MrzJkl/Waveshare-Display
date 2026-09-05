@@ -8,7 +8,9 @@ transparent), source 1 -> text colour.
 
 A colour may also be a pair (a, b): the text is drawn in a with every second
 pixel (checkerboard) in b. On the panel the two blend into a mixed colour,
-e.g. (RED, YELLOW) reads as orange from a normal viewing distance.
+e.g. (RED, YELLOW) reads as orange from a normal viewing distance, and with
+b = 0 (black) only half of the pixels light up, which reads as a darker shade,
+e.g. (GREEN, 0) for dark green or (WHITE, 0) for grey.
 bold=True thickens every stroke by one pixel to the right.
 
 FONT_5X7      letters, digits and punctuation for general text
@@ -148,6 +150,10 @@ class Font:
         second = None
         if isinstance(colour, tuple):
             colour, second = colour
+            if second == 0:
+                # darker shade: only the checkerboard half of the strokes
+                fb.blit(self._glyph(ch, scale, True, bold), x, y, 0, self._palette(colour, 0))
+                return
         if background is None:
             fb.blit(self._glyph(ch, scale, False, bold), x, y, 0, self._palette(colour, 0))
         else:
