@@ -1,343 +1,374 @@
-# hub75_native_scan: autonome HUB75-Ansteuerung mit PIO und DMA
+# hub75_native_scan: driving a HUB75 panel from PIO and DMA
 
-Dieses Verzeichnis enthaelt das User-C-Modul `hub75_native_scan`. Es refresht das HUB75-Panel
-komplett in Hardware (PIO + DMA), ohne dass die CPU beteiligt ist. MicroPython zeichnet nur noch
-Frames und uebergibt sie.
+This directory holds the MicroPython user C module `hub75_native_scan`. It
+refreshes a HUB75 LED matrix entirely in hardware, using one PIO state machine
+and two DMA channels, with no CPU involvement at all. MicroPython only renders
+frames and hands them over.
 
-Dieses Dokument erklaert von unten nach oben, was dabei passiert. Es richtet sich an Leser, die
-MicroPython kennen, aber noch wenig hardwarenah entwickelt haben.
+This document explains the mechanism from the bottom up. It assumes you know
+MicroPython but not necessarily how PIO or DMA work.
 
-## Inhalt
+## Contents
 
-1. Dateien und Lesereihenfolge
-2. Wie ein HUB75-Panel angesteuert wird
-3. Warum PIO + DMA und nicht die CPU
-4. PIO: kleine Zustandsautomaten mit exaktem Timing
-5. Der Wortstrom: die Daten, die die PIO abspielt
-6. Die DMA-Kette: der endlose Zubringer
-7. Timing-Rechnung
-8. Lebenszyklus und Zusammenspiel mit MicroPython
-9. Tuning und Fehlersuche
-10. Ideen fuer Erweiterungen
+1. Files and reading order
+2. How a HUB75 panel is driven
+3. Why PIO and DMA instead of the CPU
+4. PIO: tiny state machines with exact timing
+5. The word stream: the data the PIO plays
+6. The DMA chain: the endless feeder
+7. Timing arithmetic
+8. Lifecycle and interaction with MicroPython
+9. Tuning and troubleshooting
+10. Ideas for extensions
 
-## 1. Dateien und Lesereihenfolge
+## 1. Files and reading order
 
-| Datei | Aufgabe |
+| File | Purpose |
 | --- | --- |
-| `hub75.h` | Oeffentliche C-API: Konfiguration, Ergebniscodes, Funktionen. Kennt kein MicroPython. |
-| `hub75_internal.h` | Gemeinsamer Zustand (`hub75_t`) und der Vertrag ueber das Wortstrom-Format. |
-| `hub75_stream.c` | Baut den Wortstrom aus Pixeln, Steuerwoertern und Wartezaehlern; rechnet ns in Takte um. |
-| `hub75_pio.c` | Das PIO-Programm, seine State-Machine und die Pin-Uebernahme. |
-| `hub75_dma.c` | Die DMA-Kette, die den Wortstrom endlos in die PIO schiebt, und der Frame-Wechsel. |
-| `hub75_driver.c` | Lebenszyklus: pruefen, ableiten, starten, stoppen, Diagnose. Haelt die einzige Instanz. |
-| `mod_hub75_native_scan.c` | MicroPython-Anbindung: Argumente parsen, Ergebniscodes in Exceptions uebersetzen. |
-| `micropython.cmake` | Einbindung in den MicroPython-Build (`-DUSER_C_MODULES=...`). |
+| `hub75.h` | Public C API: configuration, result codes, functions. Knows nothing about MicroPython. |
+| `hub75_internal.h` | Shared state (`hub75_t`) and the contract for the word stream format. |
+| `hub75_stream.c` | Builds the word stream from pixels, control words and delay counters; converts ns to PIO cycles. |
+| `hub75_pio.c` | The PIO program, its state machine and taking over the pins. |
+| `hub75_dma.c` | The DMA chain that feeds the word stream to the PIO forever, and the frame swap. |
+| `hub75_driver.c` | Lifecycle: validate, derive, start, stop, diagnostics. Owns the single instance. |
+| `mod_hub75_native_scan.c` | MicroPython binding: parse arguments, turn result codes into exceptions. |
+| `micropython.cmake` | Hook into the MicroPython build (`-DUSER_C_MODULES=...`). |
 
-Empfohlene Reihenfolge: dieses Dokument, dann `hub75_internal.h` (das Format), `hub75_stream.c`,
-`hub75_pio.c`, `hub75_dma.c`, `hub75_driver.c`, zuletzt die Anbindung.
+Suggested order: this document, then `hub75_internal.h` (the format),
+`hub75_stream.c`, `hub75_pio.c`, `hub75_dma.c`, `hub75_driver.c` and finally
+the binding.
 
-Abhaengigkeiten laufen nur in eine Richtung: die Anbindung kennt `hub75.h`, der Treiber kennt die
-drei Bausteine, die Bausteine kennen nur `hub75_internal.h` und die pico-sdk.
+Dependencies only point one way: the binding knows `hub75.h`, the driver knows
+the three building blocks, and those know only `hub75_internal.h` and the
+pico-sdk.
 
-## 2. Wie ein HUB75-Panel angesteuert wird
+## 2. How a HUB75 panel is driven
 
-Ein 64x32-Panel mit 1/16-Scan hat keinen Framebuffer. Es kann zu jedem Zeitpunkt nur **zwei
-Zeilen** anzeigen: Zeile `n` (obere Haelfte) und Zeile `n + 16` (untere Haelfte). Welche das sind,
-bestimmen die Adressleitungen A..D (4 Bit = 16 Zeilenpaare). Das komplette Bild entsteht nur, weil
-der Controller alle 16 Adressen so schnell nacheinander durchlaeuft, dass das Auge ein stehendes
-Bild sieht.
+A 64x32 panel with 1/16 scan has no framebuffer. At any moment it can only
+light **two rows**: row `n` in the upper half and row `n + 16` in the lower
+half. Which pair that is comes from the address lines A to D (4 bits = 16 row
+pairs). A complete picture only exists because the controller walks all 16
+addresses fast enough for the eye to see a steady image.
 
-Signale am HUB75-Stecker (Pinbelegung in `app/settings.py`):
+Signals on the HUB75 connector (pin assignment in `app/settings.py`):
 
-| Signal | GPIO | Bedeutung |
+| Signal | GPIO | Meaning |
 | --- | --- | --- |
-| R1 G1 B1 | 0 1 2 | Farbdaten obere Haelfte, 1 Bit pro Farbe (an/aus) |
-| R2 G2 B2 | 3 4 5 | Farbdaten untere Haelfte |
-| A B C D | 6 7 8 9 | Zeilenadresse 0..15 |
-| CLK | 11 | Schiebetakt: bei jeder steigenden Flanke wandert ein Pixel in die Schieberegister |
-| LAT (STB) | 12 | Latch: kopiert den Inhalt der Schieberegister in die Ausgangs-Latches |
-| OE | 13 | Output Enable, **active low**: 0 = LEDs an, 1 = LEDs aus |
+| R1 G1 B1 | 0 1 2 | colour data for the upper half, one bit per channel (on/off) |
+| R2 G2 B2 | 3 4 5 | colour data for the lower half |
+| A B C D | 6 7 8 9 | row address 0..15 |
+| CLK | 11 | shift clock: every rising edge moves one pixel into the shift registers |
+| LAT (STB) | 12 | latch: copies the shift registers into the output latches |
+| OE | 13 | output enable, **active low**: 0 = LEDs on, 1 = LEDs off |
 
-Pro Farbleitung sitzt im Panel ein 64 Bit langes Schieberegister. Um eine Zeile zu setzen, legt man
-fuer jedes der 64 Pixel die 6 Farbbits an und gibt einen CLK-Puls. Danach steht die Zeile in den
-Schieberegistern, ist aber noch nicht sichtbar. Sichtbar wird sie mit dem LAT-Puls, der sie in die
-Ausgangs-Latches uebernimmt. Die Adressleitungen waehlen das Zeilenpaar, OE schaltet die
-LED-Treiber frei.
+Behind every colour line sits a 64 bit shift register. To set a row you present
+the six colour bits for each of the 64 pixels and give a CLK pulse. The row is
+then in the shift registers but not yet visible; the LAT pulse moves it into
+the output latches. The address lines select the row pair and OE enables the
+LED drivers.
 
-Sequenz fuer eine Scanzeile, wie diese Engine sie faehrt:
-
-```
-1. 64 Pixel der NAECHSTEN Zeile einschieben     die aktuelle Zeile leuchtet dabei weiter
-2. OE = 1                                        Panel dunkel (Guard, 60 ns)
-3. LAT = 1, dann LAT = 0                         Daten in die Latches (120 ns Puls, 120 ns Settle)
-4. Adresse A..D = neue Zeile                     Zeilentreiber umschalten (200 ns Settle)
-5. OE = 0                                        neue Zeile leuchtet (Leuchtphase)
-6. OE = 1                                        Dunkelphase; 5 + 6 zusammen = ON_TIME_US (32 us)
-   -> zurueck zu 1 fuer die naechste Zeile
-```
-
-Bei voller Helligkeit bleibt die Zeile auch in Schritt 1 an und die Dunkelphase ist minimal. Zum
-Dimmen wandert Zeit von Schritt 5 nach Schritt 6, und unterhalb einer Schwelle ist auch Schritt 1
-dunkel. Die Zeilendauer bleibt dabei immer gleich (Kapitel 5, "Helligkeit").
-
-Als Zeitdiagramm (nicht massstaeblich):
+The sequence this engine drives for one scan row:
 
 ```
-        |<------ 1: 64 Pixel einschieben ------>| 2 | 3     | 4    |<----- 5: leuchten ----->| 6  |
+1. shift in the 64 pixels of the NEXT row      the current row stays lit
+2. OE = 1                                       panel dark (guard, 60 ns)
+3. LAT = 1, then LAT = 0                        data into the latches (120 ns pulse, 120 ns settle)
+4. address A..D = new row                       row drivers switch over (200 ns settle)
+5. OE = 0                                       new row lit (lit phase)
+6. OE = 1                                       dark phase; 5 + 6 together = ON_TIME_US (32 us)
+   -> back to 1 for the next row
+```
+
+At full brightness the row also stays lit during step 1 and the dark phase is
+minimal. Dimming moves time from step 5 to step 6, and below a threshold step 1
+goes dark as well. The row period never changes (chapter 5, "Brightness").
+
+As a timing diagram, not to scale:
+
+```
+        |<------ 1: shift in 64 pixels -------->| 2 | 3     | 4    |<------- 5: lit --------->| 6  |
 RGB   --< p0 >< p1 >< p2 > ...... < p63 >-----------------------------------------------------------
 CLK   __/--\__/--\__/--\__ ...... /--\______________________________________________________________
 LAT   _________________________________________/-----\______________________________________________
-A..D  ====== Adresse n-1 ==============================|====== Adresse n ===========================
+A..D  ====== address n-1 =============================|====== address n ===========================
 OE    ______________________________________/------------------\_________________________/--------
-        leuchtet: Zeile n-1                    dunkel            leuchtet: Zeile n          dunkel
+        lit: row n-1                           dark             lit: row n                  dark
 ```
 
-(Volle Helligkeit: Schritt 6 ist dann nur drei Takte lang.)
+(At full brightness step 6 is only three cycles long.)
 
-Zwei Dinge sind fuer ein sauberes Bild entscheidend:
+Two things decide whether the image looks clean:
 
-- **Gleichmaessigkeit.** Jede Zeile muss in jedem Durchlauf genau gleich lang leuchten. Leuchtet
-  eine Zeile mal laenger, weil der Controller gerade etwas anderes tut, blitzt sie heller auf. Faellt
-  ein Durchlauf aus, wird das Bild dunkel. Beides sieht man als Flackern.
-- **Reihenfolge und Pausen beim Umschalten.** Wechselt die Adresse, waehrend OE noch aktiv ist,
-  leuchtet kurz die falsche Zeile mit ("Ghosting"). Wird OE zu frueh wieder aktiv, sind die
-  Zeilentreiber noch am Umschalten. Daher die kurzen Wartezeiten in den Schritten 2 bis 4.
+- **Evenness.** Every row has to be lit for exactly the same time on every
+  pass. A row that stays lit longer because the controller was busy elsewhere
+  flashes brighter; a pass that is skipped entirely makes the image dip. Both
+  are visible as flicker.
+- **Order and settling when switching.** Changing the address while OE is
+  still active briefly lights the wrong row ("ghosting"). Enabling OE too early
+  catches the row drivers mid-switch. Hence the short waits in steps 2 to 4.
 
-## 3. Warum PIO + DMA und nicht die CPU
+## 3. Why PIO and DMA instead of the CPU
 
-Die alte Loesung hat die Sequenz aus Kapitel 2 in einer C-Schleife auf der CPU gefahren, aufgerufen
-aus dem Python-Hauptloop. Das Problem: MicroPython macht laufend Pausen, die die CPU komplett
-beanspruchen: Garbage Collection (mehrere Millisekunden), WLAN-Treiber, blockierende Sockets
-(NTP-Timeout 100 ms), Rendering des naechsten Textes. In jeder Pause stand der Scan, das Panel war
-dunkel oder eine Zeile blieb zu lange an. Genau das war das Flackern.
+Driving the sequence above from a CPU loop is the obvious approach and it does
+not work well under MicroPython. The interpreter regularly takes the CPU for
+itself: garbage collection for several milliseconds, the WiFi driver, blocking
+sockets, rendering the next frame. During every one of those pauses the scan
+stalls, so the panel goes dark or one row stays lit too long. That is exactly
+what flicker looks like.
 
-Der Waveshare-Referenztreiber (JuPfu hub75) loest das, indem er den gesamten Refresh an zwei
-Hardware-Bloecke des RP2350 delegiert, die unabhaengig von der CPU arbeiten:
+The fix is to hand the whole refresh to two hardware blocks of the RP2350 that
+run independently of the CPU:
 
-- **PIO** (Programmable I/O) erzeugt die Pin-Signale mit exaktem Timing.
-- **DMA** (Direct Memory Access) kopiert die Daten aus dem RAM in die PIO, ohne CPU.
+- **PIO** (programmable I/O) generates the pin signals with exact timing.
+- **DMA** (direct memory access) copies data from RAM into the PIO without the
+  CPU.
 
-Diese Engine macht dasselbe, nur ohne Farbtiefe (an/aus statt Bitplanes). Nach `init()` laeuft
-der Refresh, bis `deinit()` gerufen wird oder der Chip resettet, egal was Python gerade tut. Python
-kann sogar mit `mpremote exec` gestoppt werden, das Bild bleibt stehen.
+After `init()` the refresh runs until `deinit()` or a chip reset, no matter what
+Python is doing. Python can even be stopped with `mpremote exec` and the image
+stays on screen.
 
-## 4. PIO: kleine Zustandsautomaten mit exaktem Timing
+## 4. PIO: tiny state machines with exact timing
 
-Der RP2350 hat drei PIO-Bloecke (RP2040: zwei) mit je vier State-Machines (SM). Eine SM ist ein
-winziger Prozessor mit
+The RP2350 has three PIO blocks (RP2040: two) with four state machines each. A
+state machine is a minimal processor with
 
-- 32 Instruktionen Programmspeicher pro Block, geteilt zwischen den vier SMs,
-- zwei Scratch-Registern X und Y (32 Bit),
-- einem Output Shift Register (OSR), aus dem Bits auf Pins oder in Register geschoben werden,
-- einer TX-FIFO (8 Woerter, wenn die RX-FIFO dazugeschaltet wird), die CPU oder DMA fuellen,
-- einem eigenen Taktteiler (hier 250 MHz / 2 = 125 MHz, ein Takt = 8 ns).
+- 32 instructions of program memory per block, shared between its four state machines,
+- two scratch registers X and Y (32 bit),
+- an output shift register (OSR) that shifts bits onto pins or into registers,
+- a TX FIFO (8 words when the RX FIFO is joined in) filled by the CPU or DMA,
+- its own clock divider (here 250 MHz / 2 = 125 MHz, so one cycle is 8 ns).
 
-Jede Instruktion dauert **genau einen PIO-Takt** plus optional bis zu 15 Wartetakte (`[n]`). Es
-gibt keine Caches, Interrupts oder Pipelines, deshalb ist das Timing auf den Takt reproduzierbar.
-Einzige Ausnahme: ist die FIFO leer, wartet die SM. Die DMA muss also schneller liefern, als die
-SM verbraucht, was sie mit grossem Abstand tut.
+Every instruction takes **exactly one PIO cycle** plus up to 15 optional delay
+cycles (`[n]`). There are no caches, interrupts or pipelines, so the timing is
+reproducible down to the cycle. The one exception: an empty FIFO stalls the
+state machine, so the DMA has to deliver faster than the machine consumes,
+which it does by a wide margin.
 
-Die wenigen Instruktionen, die dieses Programm nutzt:
+The few instructions this program uses:
 
-| Instruktion | Wirkung |
+| Instruction | Effect |
 | --- | --- |
-| `out pins, 32` | schiebt 32 Bit aus dem OSR und schreibt sie auf die OUT-Pingruppe |
-| `out x, 32` | schiebt 32 Bit aus dem OSR in Register X |
-| `jmp x-- label` | springt, wenn X != 0, und zaehlt X danach herunter (Schleife mit X + 1 Durchlaeufen) |
-| `side n` | Side-Set: setzt den Side-Set-Pin (hier CLK) gleichzeitig mit der Instruktion |
-| `[n]` | n zusaetzliche Wartetakte nach der Instruktion |
-| Autopull | ist das OSR leer, holt die SM selbst das naechste Wort aus der TX-FIFO |
-| Wrap | nach der letzten Instruktion springt die SM ohne Zeitverlust zum Anfang |
+| `out pins, 32` | shift 32 bits out of the OSR onto the OUT pin group |
+| `out x, 32` | shift 32 bits out of the OSR into register X |
+| `jmp x-- label` | jump while X is not zero, then decrement (a loop of X + 1 passes) |
+| `side n` | side-set: drive the side-set pin (CLK here) together with the instruction |
+| `[n]` | n extra delay cycles after the instruction |
+| autopull | when the OSR runs empty the machine refills it from the TX FIFO by itself |
+| wrap | after the last instruction the machine jumps back to the top for free |
 
-Mit Autopull und Schwelle 32 gilt: **jedes `out ..., 32` verbraucht genau ein Wort aus der FIFO.**
-Das macht das Programm zu einem reinen Abspieler des Wortstroms aus Kapitel 5.
+With autopull at a threshold of 32, **every `out ..., 32` consumes exactly one
+word from the FIFO**, which turns the program into a pure player for the word
+stream of chapter 5.
 
-Das Programm (in `hub75_pio.c` zur Laufzeit kodiert, weil der CLK-Takt konfigurierbar ist):
+The program, assembled at runtime in `hub75_pio.c` because the CLK rate is a
+configuration value:
 
 ```
-.side_set 1                       ; ein Side-Set-Bit: CLK
+.side_set 1                       ; one side-set bit: CLK
 .wrap_target
-    out x, 32          side 0     ; Wort 0: Pixelanzahl - 1 nach X
+    out x, 32          side 0     ; word 0: pixel count - 1 into X
 pixel:
-    out pins, 32 [3]   side 0     ; Pixelwort auf RGB/Adresse/LAT/OE, CLK low   (4 Takte Setup)
-    jmp x-- pixel [3]  side 1     ; CLK high, Panel uebernimmt die Daten         (4 Takte Hold)
-; sechs Steuerphasen, jede:
-    out pins, 32       side 0     ; Pin-Zustand (OE, LAT, Adresse)
-    out x, 32          side 0     ; Wartezaehler nach X
+    out pins, 32 [3]   side 0     ; pixel word onto RGB/address/LAT/OE, CLK low  (4 cycles setup)
+    jmp x-- pixel [3]  side 1     ; CLK high, the panel samples the data          (4 cycles hold)
+; six control phases, each:
+    out pins, 32       side 0     ; pin state (OE, LAT, address)
+    out x, 32          side 0     ; delay counter into X
 phase:
-    jmp x-- phase      side 0     ; warten
+    jmp x-- phase      side 0     ; wait
 .wrap
 ```
 
-Insgesamt 21 Instruktionen. Pro Pixel 8 Takte = 64 ns, also 15.6 MHz Pixeltakt. Das entspricht dem
-Waveshare-Beispiel (`SM_CLOCKDIV_FACTOR = 2`), das ebenfalls 8 bis 9 Takte pro Pixel braucht.
+21 instructions in total. Eight cycles per pixel is 64 ns, so a 15.6 MHz pixel
+clock, which matches the Waveshare example (`SM_CLOCKDIV_FACTOR = 2`) that also
+needs eight to nine cycles per pixel.
 
-Wie kommt ein Wort auf 14 Pins? Die OUT-Pingruppe der SM beginnt beim niedrigsten Panel-Pin
-(`out_base`, hier GPIO 0) und reicht bis zum hoechsten (GPIO 13, also 14 Pins). `out pins, 32`
-schreibt Bit 0 des Wortes auf GPIO 0, Bit 1 auf GPIO 1 und so weiter. GPIO 10 liegt zwar in der
-Gruppe, wird aber nie auf die PIO-Funktion geschaltet und bleibt unberuehrt. CLK (GPIO 11) liegt
-ebenfalls in der Gruppe; in den Woertern ist Bit 11 immer 0, gesteuert wird CLK nur ueber Side-Set.
+How does one word reach 14 pins? The OUT pin group of the state machine starts
+at the lowest panel pin (`out_base`, GPIO 0 here) and spans up to the highest
+(GPIO 13, so 14 pins). `out pins, 32` writes bit 0 of the word to GPIO 0, bit 1
+to GPIO 1 and so on. GPIO 10 sits inside that range but is never switched to
+the PIO function, so it stays untouched. CLK (GPIO 11) is inside the range too;
+bit 11 is always 0 in the words, CLK is driven only through side-set.
 
-## 5. Der Wortstrom
+## 5. The word stream
 
-Pro Scanzeile erzeugt `hub75_stream.c` diesen Block (das Format ist als Vertrag in
-`hub75_internal.h` festgehalten):
+For every scan row `hub75_stream.c` produces this block; the format is written
+down as a contract in `hub75_internal.h`:
 
-| Index | Wort | Bedeutung |
+| Index | Word | Meaning |
 | --- | --- | --- |
-| 0 | `width - 1` | Schleifenzaehler fuer die Pixel |
-| 1 .. 64 | Pixelwoerter | RGB-Bits des Pixels, Adresse der **vorigen** Zeile, LAT = 0, OE je nach Helligkeit |
-| 65, 66 | Phase 0 | Pin-Zustand OE = 1; Wartezaehler fuer `oe_guard_ns` |
-| 67, 68 | Phase 1 | OE = 1, LAT = 1; Wartezaehler fuer `latch_ns` |
-| 69, 70 | Phase 2 | OE = 1, LAT = 0; Wartezaehler fuer `latch_ns` |
-| 71, 72 | Phase 3 | OE = 1, neue Adresse; Wartezaehler fuer `addr_ns` |
-| 73, 74 | Phase 4 | OE = 0, neue Adresse; Wartezaehler = Leuchtanteil des Budgets |
-| 75, 76 | Phase 5 | OE = 1, neue Adresse; Wartezaehler = Dunkelanteil des Budgets |
+| 0 | `width - 1` | loop counter for the pixels |
+| 1 .. 64 | pixel words | RGB bits of the pixel, address of the **previous** row, LAT = 0, OE depending on brightness |
+| 65, 66 | phase 0 | pin state OE = 1; delay counter for `oe_guard_ns` |
+| 67, 68 | phase 1 | OE = 1, LAT = 1; delay counter for `latch_ns` |
+| 69, 70 | phase 2 | OE = 1, LAT = 0; delay counter for `latch_ns` |
+| 71, 72 | phase 3 | OE = 1, new address; delay counter for `addr_ns` |
+| 73, 74 | phase 4 | OE = 0, new address; delay counter = lit share of the budget |
+| 75, 76 | phase 5 | OE = 1, new address; delay counter = dark share of the budget |
 
-77 Woerter pro Zeile, 16 Zeilen = 1232 Woerter = 4.9 KB pro Frame.
+77 words per row, 16 rows = 1232 words = 4.9 KB per frame.
 
-Warum tragen die Pixelwoerter die Adresse der *vorigen* Zeile? Weil waehrend des Einschiebens noch
-die vorige Zeile angezeigt wird. Wuerde die Adresse schon wechseln, saehe man Ghosting. Erst in
-Phase 3, bei dunklem Panel, wechselt die Adresse. Bei voller Helligkeit bleibt die Zeile waehrend
-des Einschiebens an ("Pipelining"): dunkel ist das Panel dann nur in den Phasen 0 bis 3 und der
-minimalen Phase 5, zusammen etwa 0.6 us pro Zeile.
+Why do the pixel words carry the address of the *previous* row? Because that
+row is still on display while the next one is shifted in. Changing the address
+early would show ghosting; the address only changes in phase 3, with the panel
+blanked. At full brightness the row also stays lit during the shift
+("pipelining"), so the panel is dark only during phases 0 to 3 plus the minimal
+phase 5, about 0.6 us per row.
 
-**Helligkeit.** `on_time_us` ist ein Zeitbudget, das `split_budget()` in `hub75_stream.c` zwischen
-Phase 4 (leuchten) und Phase 5 (dunkel) aufteilt. Die Summe ist konstant, also aendert Dimmen weder
-Zeilendauer noch Bildrate. Die maximale Leuchtzeit ist Einschieben + Budget; solange die gewuenschte
-Leuchtzeit groesser als das Einschieben ist, bleibt OE in den Pixelwoertern an und Phase 4 wird
-gekuerzt. Darunter tragen die Pixelwoerter OE = 1 und nur Phase 4 leuchtet. Bei Helligkeit 0 traegt
-auch das Phase-4-Wort OE = 1. Die Skala (0..65535) ist ein linearer Tastgrad; die wahrgenommene
-Helligkeit rechnet `display.py` mit Gamma 2.2 um. Eine Aenderung kopiert den angezeigten Frame in
-den Hintergrundpuffer, schreibt dort nur die Steuerwoerter und das OE-Bit der Pixelwoerter neu und
-veroeffentlicht ihn (`hub75_stream_apply_control()`), also ohne Tearing.
+**Brightness.** `on_time_us` is a time budget that `split_budget()` in
+`hub75_stream.c` divides between phase 4 (lit) and phase 5 (dark). The sum is
+constant, so dimming changes neither the row period nor the frame rate. The
+maximum lit time is shift time plus budget: as long as the requested lit time
+exceeds the shift time, OE stays on in the pixel words and phase 4 is
+shortened. Below that the pixel words carry OE = 1 and only phase 4 lights the
+row; at brightness 0 the phase 4 word carries OE = 1 as well. The scale
+(0..65535) is a linear duty cycle; perceived brightness is mapped through gamma
+2.2 in `display.py`. A change copies the frame on screen into the back buffer,
+rewrites only its control words and the OE bit of the pixel words
+(`hub75_stream_apply_control()`) and publishes it, so it never tears.
 
-Die Wartezaehler sind PIO-Takte. Eine Phase dauert `Zaehler + 3` Takte (`out pins`, `out x` und
-der letzte Schleifendurchlauf). `hub75_stream_compute_timing()` rechnet die Nanosekunden aus
-`settings.py` in Takte um, rundet auf und zieht die 3 ab.
+The delay counters are PIO cycles. A phase lasts `counter + 3` cycles
+(`out pins`, `out x` and the final loop pass). `hub75_stream_compute_timing()`
+converts the nanoseconds from `settings.py` into cycles, rounding up, and
+subtracts those three.
 
-Die Pixelwoerter entstehen aus dem Framebuffer, den Python liefert: `width * height` Bytes, ein
-Farbindex pro Pixel (Bit 0 rot, Bit 1 gruen, Bit 2 blau). Fuer Scanzeile `r` liest die Engine das
-Byte aus Bildzeile `r` (obere Haelfte) und aus Bildzeile `r + scan_rows` (untere Haelfte) und
-schlaegt beide in einer Tabelle nach: `colour_top[]` liefert die R1/G1/B1-Bits, `colour_bot[]` die
-R2/G2/B2-Bits. Dazu kommen Adresse und Steuerbits. Das Byte-Format ist genau das von
-`framebuf.GS8`, deshalb kann `display.py` den Puffer ohne Umweg uebergeben.
+The pixel words come from the framebuffer Python provides: `width * height`
+bytes, one colour index per pixel (bit 0 red, bit 1 green, bit 2 blue). For scan
+row `r` the engine reads the byte from image row `r` (upper half) and from image
+row `r + scan_rows` (lower half) and looks both up in a table: `colour_top[]`
+yields the R1/G1/B1 bits, `colour_bot[]` the R2/G2/B2 bits. Address and control
+bits are added on top. That byte layout is exactly `framebuf.GS8`, which is why
+`display.py` can hand over its buffer directly.
 
-## 6. Die DMA-Kette
+## 6. The DMA chain
 
-DMA-Kanaele kopieren Speicher ohne CPU. Ein Kanal hat eine Lese- und eine Schreibadresse, einen
-Zaehler (TRANS_COUNT), optional einen Taktgeber (DREQ, "data request", hier die TX-FIFO der SM)
-und ein Feld CHAIN_TO: welcher Kanal gestartet wird, wenn dieser fertig ist.
+DMA channels copy memory without the CPU. A channel has a read and a write
+address, a counter (TRANS_COUNT), an optional pacing signal (DREQ, "data
+request", here the TX FIFO of the state machine) and a CHAIN_TO field naming
+the channel to start when this one finishes.
 
 ```
                        chain_to                             chain_to
-  +--------------------+ ------> +------------------------+ ------> zurueck zum Datenkanal
-  | Datenkanal         |         | Steuerkanal            |
-  | liest:  Frame      |         | liest:  1 Wort         |
-  |         (1200 W.)  |         |         dma_front_addr |
-  | schreibt: TX-FIFO  |         | schreibt: READ_ADDR    |
-  |         der SM     |         |         des Datenkanals|
-  | Takt:   DREQ FIFO  |         | Takt:   sofort         |
+  +--------------------+ ------> +------------------------+ ------> back to the data channel
+  | data channel       |         | control channel        |
+  | reads:  frame      |         | reads:  1 word         |
+  |         (1232 w.)  |         |         dma_front_addr |
+  | writes: TX FIFO    |         | writes: READ_ADDR      |
+  |         of the SM  |         |         of the data ch. |
+  | paced:  FIFO DREQ  |         | paced:  immediately    |
   +--------------------+         +------------------------+
 ```
 
-- Der Datenkanal kopiert 1200 Woerter aus dem Frame-Puffer in die TX-FIFO der SM. Ueber DREQ kommt
-  das naechste Wort erst, wenn die FIFO Platz hat. So laeuft die DMA exakt im Tempo der PIO.
-- Ist der Frame durch, startet der Datenkanal per CHAIN_TO den Steuerkanal. Der kopiert ein einziges
-  Wort, `dma_front_addr`, in das READ_ADDR-Register des Datenkanals und startet ihn per CHAIN_TO
-  wieder. TRANS_COUNT eines Kanals wird bei jedem Start automatisch auf den zuletzt geschriebenen
-  Wert (1200) zurueckgesetzt, deshalb spielt jeder Durchlauf genau einen Frame.
+- The data channel copies 1232 words from the frame buffer into the TX FIFO of
+  the state machine. DREQ only releases the next word once the FIFO has room,
+  so the DMA runs exactly at the pace of the PIO.
+- When the frame is done the data channel triggers the control channel through
+  CHAIN_TO. That channel copies a single word, `dma_front_addr`, into the
+  READ_ADDR register of the data channel and triggers it again. A channel's
+  TRANS_COUNT reloads to the last written value (1232) on every trigger, so
+  every run plays exactly one frame.
 
-Kein Interrupt, keine CPU. Die Kette laeuft, bis `deinit()` sie abbricht.
+No interrupt, no CPU. The chain runs until `deinit()` aborts it.
 
-**Frame-Wechsel.** `hub75_show()` baut den neuen Frame in den gerade nicht abgespielten Puffer und
-schreibt danach dessen Adresse nach `dma_front_addr` (ein 32-Bit-Schreibzugriff, atomar). Der
-laufende Frame wird zu Ende gespielt, der naechste kommt aus dem neuen Puffer: kein Tearing, keine
-Luecke. Danach wartet `hub75_show()` (hoechstens etwa zwei Frame-Zeiten), bis der DMA den neuen
-Puffer liest, damit der alte beim naechsten Aufruf gefahrlos ueberschrieben werden kann.
+**Frame swap.** `hub75_show()` builds the new frame in whichever buffer is not
+being played and then writes its address to `dma_front_addr`, a single atomic
+32 bit store. The frame in flight finishes, the next one comes from the new
+buffer: no tearing, no gap. `hub75_show()` then waits, bounded by roughly two
+frame periods, until the DMA actually reads the new buffer, so the old one is
+safe to overwrite on the next call.
 
-**Speicher.** Die beiden Puffer sind statische C-Arrays. Der Garbage Collector von MicroPython
-kennt nur seinen eigenen Heap. Speicher aus `m_new()` ohne registrierten Root-Pointer haette er
-jederzeit freigeben und neu vergeben koennen, waehrend der DMA noch daraus liest. Statische Arrays
-liegen ausserhalb des Heaps und werden weder freigegeben noch verschoben. Preis: rund 36 KB RAM fuer
-die Maximalgroesse (`HUB75_MAX_WIDTH` 128, `HUB75_MAX_SCAN_ROWS` 32).
+**Memory.** Both buffers are static C arrays. The MicroPython garbage collector
+only knows its own heap; memory from `m_new()` without a registered root
+pointer could be freed and handed out again while the DMA is still reading from
+it. Static arrays live outside the heap and are never freed or moved. The price
+is about 36 KB of RAM for the compile-time maximum (`HUB75_MAX_WIDTH` 128,
+`HUB75_MAX_SCAN_ROWS` 32).
 
-## 7. Timing-Rechnung
+## 7. Timing arithmetic
 
-Mit den Defaults aus `settings.py` und 250 MHz CPU-Takt:
+With the defaults from `settings.py` and a 250 MHz system clock:
 
-| Groesse | Rechnung | Wert |
+| Quantity | Calculation | Value |
 | --- | --- | --- |
-| PIO-Takt | 250 MHz / 2.0 | 125 MHz, 8 ns pro Takt |
-| Pixeltakt | 125 MHz / (2 * 4 Takte) | 15.6 MHz |
-| Einschieben | 1 + 64 * 8 Takte | 513 Takte = 4.1 us |
-| Phase 0 (Guard) | ceil(60 ns / 8 ns) | 8 Takte |
-| Phasen 1, 2 (Latch) | ceil(120 / 8) | je 15 Takte |
-| Phase 3 (Adresse) | ceil(200 / 8) | 25 Takte |
-| Phasen 4 + 5 (Budget) | 32 us / 8 ns | 4000 Takte, bei voller Helligkeit 3997 + 3 |
-| Zeile | Summe | 4576 Takte = 36.6 us |
-| Frame | 16 Zeilen | 586 us, also 1707 Hz |
-| Leuchtanteil bei voller Helligkeit | (512 + 3997) / 4576 | 98.5 % |
-| Leuchtanteil bei 25 % Tastgrad | 0.25 * 4509 / 4576 | 24.6 %, Phase 4 = 1127 Takte, Einschieben dunkel |
+| PIO clock | 250 MHz / 2.0 | 125 MHz, 8 ns per cycle |
+| pixel clock | 125 MHz / (2 * 4 cycles) | 15.6 MHz |
+| shifting | 1 + 64 * 8 cycles | 513 cycles = 4.1 us |
+| phase 0 (guard) | ceil(60 ns / 8 ns) | 8 cycles |
+| phases 1, 2 (latch) | ceil(120 / 8) | 15 cycles each |
+| phase 3 (address) | ceil(200 / 8) | 25 cycles |
+| phases 4 + 5 (budget) | 32 us / 8 ns | 4000 cycles, at full brightness 3997 + 3 |
+| row | sum | 4576 cycles = 36.6 us |
+| frame | 16 rows | 586 us, so 1707 Hz |
+| lit share at full brightness | (512 + 3997) / 4576 | 98.5 % |
+| lit share at 25 % duty | 0.25 * 4509 / 4576 | 24.6 %, phase 4 = 1127 cycles, shifting dark |
 
-`stats()` liefert diese Werte fuer die tatsaechliche Konfiguration, `measure_frame_rate()` misst
-die reale Bildrate am DMA-Lesezeiger (gemessen: 1708 Hz).
+`stats()` reports these numbers for the actual configuration and
+`measure_frame_rate()` measures the real frame rate from the DMA read pointer
+(measured: 1708 Hz).
 
-## 8. Lebenszyklus und Zusammenspiel mit MicroPython
+## 8. Lifecycle and interaction with MicroPython
 
-- `init()` prueft die Konfiguration (bei Fehlern bleibt eine laufende Instanz unangetastet), stoppt
-  dann die alte Instanz, leitet Pin-Masken und Takte ab, baut zwei dunkle Frames, laedt das
-  PIO-Programm, konfiguriert die DMA-Kanaele, schiebt einmal eine dunkle Zeile mit OE = 1 durch das
-  Panel (Prolog, damit kein Muell aus den Schieberegistern aufblitzt) und startet die DMA-Kette.
-- `deinit()` bricht die DMA ab, stoppt die SM, gibt PIO und DMA frei und uebergibt die GPIOs mit
-  OE = 1 (dunkel) wieder an die Software-Steuerung (SIO). Auch der Wechsel von PIO zu SIO passiert
-  ohne Glitch: Pegel und Richtung werden gesetzt, bevor die Pin-Funktion umschaltet.
-- **Soft-Reset** (Strg-D, `mpremote soft-reset`): MicroPython gibt nur seine eigenen PIO/DMA-
-  Ressourcen frei, nicht die ueber die pico-sdk beanspruchten. Der Refresh laeuft weiter, das Bild
-  bleibt stehen, bis `main.py` erneut `init()` ruft. Genauso bleibt das Panel an, wenn
-  `mpremote exec` das Programm unterbricht.
-- **Die Pins gehoeren der PIO.** Solange die Engine laeuft, darf Python kein `machine.Pin()` auf den
-  13 Panel-GPIOs anlegen. Das wuerde die Pin-Funktion auf SIO zurueckschalten und das Bild einfrieren.
-- **CPU-Takt.** `pio_hz` wird beim `init()` aus dem aktuellen Systemtakt berechnet. `machine.freq()`
-  deshalb vor dem Erzeugen des Displays setzen, so wie `runtime.py` es tut.
-- Die Anbindung in `mod_hub75_native_scan.c` uebersetzt nur Argumente und Ergebniscodes:
-  Konfigurationsfehler werden `ValueError`, Ressourcen- und Zustandsfehler `RuntimeError`.
+- `init()` validates the configuration (on an error a running instance is left
+  untouched), then tears down the old instance, derives pin masks and cycle
+  counts, builds two dark frames, loads the PIO program, configures the DMA
+  channels, clocks one dark row through the panel with OE = 1 (a prologue, so
+  no leftover shift register content flashes up) and starts the DMA chain.
+- `deinit()` aborts the DMA, stops the state machine, releases PIO and DMA and
+  hands the GPIOs back to software control (SIO) with OE = 1, so the panel is
+  dark. The switch from PIO to SIO is glitch free: level and direction are set
+  before the pin function changes.
+- **Soft reset** (Ctrl-D, `mpremote soft-reset`): MicroPython only releases the
+  PIO and DMA resources it claimed itself, not those claimed through the
+  pico-sdk. The refresh keeps running and the image stays up until `main.py`
+  calls `init()` again. The panel also stays lit while `mpremote exec`
+  interrupts the program.
+- **The pins belong to the PIO.** While the engine runs, Python must not create
+  a `machine.Pin()` on any of the 13 panel GPIOs; that would switch the pin
+  function back to SIO and freeze the image.
+- **System clock.** `pio_hz` is derived from the current system clock inside
+  `init()`, so call `machine.freq()` before creating the display, the way
+  `runtime.py` does.
+- The binding in `mod_hub75_native_scan.c` only translates arguments and result
+  codes: configuration errors become `ValueError`, resource and state errors
+  `RuntimeError`.
 
-Python-API (siehe auch die Haupt-README):
+Python API:
 
-| Funktion | Zweck |
+| Function | Purpose |
 | --- | --- |
-| `init(width, scan_rows, r1, g1, b1, r2, g2, b2, row_base_pin, row_n_pins, clk_pin, lat_pin, oe_pin, *, on_time_us=32, pio_clkdiv=2.0, clk_half_cycles=4, oe_guard_ns=60, latch_ns=120, addr_ns=200)` | Refresh starten, Panel zunaechst dunkel |
-| `show_frame(buf)` | neuen Frame anzeigen: `width * height` Bytes, ein Farbindex pro Pixel |
-| `set_brightness(level)` | Helligkeit 0..65535 (linearer Tastgrad) bei konstanter Bildrate |
-| `set_on_time_us(us)` | Zeitbudget pro Zeile aendern (Bildrate) |
-| `stats()` | Dict mit PIO/DMA-Zuordnung, Pixeltakt, Zeilen- und Frame-Zeit |
-| `measure_frame_rate(ms=200)` | gemessene Bildwiederholrate in Hz |
-| `is_running()` | `True`, solange die DMA-Kette laeuft |
-| `deinit()` | Refresh stoppen, Panel dunkel, Ressourcen freigeben |
+| `init(width, scan_rows, r1, g1, b1, r2, g2, b2, row_base_pin, row_n_pins, clk_pin, lat_pin, oe_pin, *, on_time_us=32, pio_clkdiv=2.0, clk_half_cycles=4, oe_guard_ns=60, latch_ns=120, addr_ns=200, brightness=65535)` | start the refresh, panel dark at first |
+| `show_frame(buf)` | show a new frame: `width * height` bytes, one colour index per pixel |
+| `set_brightness(level)` | brightness 0..65535 (linear duty) at a constant frame rate |
+| `set_on_time_us(us)` | change the per-row time budget (frame rate) |
+| `stats()` | dict with the PIO/DMA assignment, pixel clock, row and frame time |
+| `measure_frame_rate(ms=200)` | measured refresh rate in Hz |
+| `is_running()` | `True` while the DMA chain is active |
+| `deinit()` | stop the refresh, panel dark, release the resources |
 
-## 9. Tuning und Fehlersuche
+## 9. Tuning and troubleshooting
 
-| Symptom | Wahrscheinliche Ursache | Stellschraube |
+| Symptom | Likely cause | What to change |
 | --- | --- | --- |
-| Bild flackert | Refresh laeuft nicht | `is_running()`, `measure_frame_rate()` muss > 0 sein |
-| Schwache Geisterzeilen ober-/unterhalb | Zeilentreiber beim Einschalten noch am Umschalten | `NATIVE_ADDR_NS` erhoehen (z. B. 400) |
-| Helle Nachbarpixel, Schmieren | Guards vor/nach dem Latch zu kurz | `NATIVE_OE_GUARD_NS`, `NATIVE_LATCH_NS` erhoehen |
-| Verschobene oder zufaellige Pixel | Pixeltakt zu schnell fuer Kabel und Panel | `NATIVE_PIO_CLKDIV` erhoehen (3.0) oder `NATIVE_CLK_HALF_CYCLES` (6) |
-| Zu dunkel oder zu hell | Helligkeit | `BRIGHTNESS` in `settings.py`, zur Laufzeit `display.set_brightness()` |
-| Panel dunkel, `init()` ohne Fehler | OE-Pin, Stecker, oder `machine.Pin` auf Panel-Pins | Pinbelegung in `settings.py` pruefen, keine Pins doppelt nutzen |
-| `RuntimeError: hub75: no free PIO state machine` | PIO-Speicher oder SMs belegt (z. B. `rp2.StateMachine`) | andere PIO-Nutzer pruefen; das Modul probiert alle PIO-Bloecke |
+| image flickers | the refresh is not running | check `is_running()` and that `measure_frame_rate()` is above zero |
+| faint ghost rows above or below | row drivers still switching when OE turns on | raise `NATIVE_ADDR_NS` (400, say) |
+| bright neighbouring pixels, smearing | guards around the latch too short | raise `NATIVE_OE_GUARD_NS` and `NATIVE_LATCH_NS` |
+| shifted or random pixels | pixel clock too fast for the cable and panel | raise `NATIVE_PIO_CLKDIV` (3.0) or `NATIVE_CLK_HALF_CYCLES` (6) |
+| too dark or too bright | brightness | `BRIGHTNESS` in `settings.py`, at runtime `display.set_brightness()` |
+| panel dark although `init()` succeeded | OE pin, connector, or a `machine.Pin` on a panel pin | check the pin assignment in `settings.py`, do not use a pin twice |
+| `RuntimeError: hub75: no free PIO state machine` | PIO memory or state machines taken (by `rp2.StateMachine`, say) | look for other PIO users; the module tries every PIO block |
 
-Mit einem Logic Analyzer an CLK, LAT, OE und A sieht man die Sequenz aus Kapitel 2 direkt; die
-Zeiten muessen den Werten aus Kapitel 7 entsprechen.
+A logic analyser on CLK, LAT, OE and A shows the sequence from chapter 2
+directly; the timings should match chapter 7.
 
-## 10. Ideen fuer Erweiterungen
+## 10. Ideas for extensions
 
-- **Sanfte Uebergaenge zwischen Anzeigen:** `display.fade_to(0.0)`, neuen Frame zeigen,
-  `display.fade_to(1.0)`. Die Helligkeitsaenderung kostet pro Schritt etwa eine Frame-Zeit.
-- **Graustufen und Mischfarben:** mehrere Bitplanes pro Zeile mit unterschiedlich langer
-  Leuchtphase (Binary Code Modulation). Der Wortstrom wird pro Zeile mehrfach mit anderen
-  Pixelwoertern und anderem Budget aufgebaut; PIO und DMA bleiben unveraendert. Heute gibt es die
-  acht Grundfarben (ein Bit pro Kanal).
-- **Groessere Panels oder Ketten:** `width` = Gesamtbreite der Kette, `scan_rows` und `row_n_pins`
-  anpassen, Grenzen `HUB75_MAX_*` beim Build erhoehen (`-DHUB75_MAX_WIDTH=256`).
+- **Soft transitions between screens:** `display.fade_to(0.0)`, show the next
+  frame, `display.fade_to(1.0)`. Each brightness step costs about one frame
+  period.
+- **Grey scale and mixed colours:** several bit planes per row with different
+  lit times (binary code modulation). The word stream would be built several
+  times per row with different pixel words and budgets; PIO and DMA stay as
+  they are. Today the panel shows the eight primary colours, one bit per
+  channel.
+- **Larger panels or chains:** set `width` to the total width of the chain,
+  adjust `scan_rows` and `row_n_pins`, and raise the limits at build time
+  (`-DHUB75_MAX_WIDTH=256`).

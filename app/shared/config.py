@@ -16,7 +16,7 @@ OVERRIDE_FILE = "settings_override.json"
 MAX_TEXT = 64
 
 # Panel colours; the index is the value stored in a setting.
-COLOR_NAMES = ("SCHWARZ", "ROT", "GRUEN", "GELB", "BLAU", "MAGENTA", "CYAN", "WEISS")
+COLOR_NAMES = ("BLACK", "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "WHITE")
 
 
 class Option:
@@ -42,35 +42,35 @@ class Option:
 
 OPTIONS = (
     # Switched with the buttons and the /on, /off, /toggle webhooks, not in the form.
-    Option("DISPLAY_ON", "bool", "Display an", group="Anzeige", form=False),
-    Option("BRIGHTNESS", "float", "Helligkeit (0.0 - 1.0)", 0.0, 1.0, group="Anzeige"),
-    Option("WIDGETS_ENABLED", "widgets", "Aktive Widgets", group="Anzeige"),
-    Option("WIDGET_ROTATE_MS", "int", "Wechsel alle (ms, 0 = kein Wechsel)", 0, 3600000, group="Anzeige"),
-    Option("TRANSITION_MS", "int", "Ueberblenden (ms, 0 = hart)", 0, 5000, group="Anzeige"),
+    Option("DISPLAY_ON", "bool", "Display on", group="Display", form=False),
+    Option("BRIGHTNESS", "float", "Brightness (0.0 - 1.0)", 0.0, 1.0, group="Display"),
+    Option("WIDGETS_ENABLED", "widgets", "Active widgets", group="Display"),
+    Option("WIDGET_ROTATE_MS", "int", "Rotate every (ms, 0 = never)", 0, 3600000, group="Display"),
+    Option("TRANSITION_MS", "int", "Fade (ms, 0 = hard cut)", 0, 5000, group="Display"),
 
-    Option("CLOCK_TIME_COLOR", "color", "Uhrzeit", group="Uhr"),
-    Option("CLOCK_DATE_COLOR", "color", "Datum", group="Uhr"),
+    Option("CLOCK_TIME_COLOR", "color", "Time", group="Clock"),
+    Option("CLOCK_DATE_COLOR", "color", "Date", group="Clock"),
 
-    Option("WEATHER_TEMP_COLOR", "color", "Temperatur", group="Wetter"),
-    Option("WEATHER_HUMIDITY_COLOR", "color", "Luftfeuchte", group="Wetter"),
-    Option("WEATHER_WIND_COLOR", "color", "Wind", group="Wetter"),
+    Option("WEATHER_TEMP_COLOR", "color", "Temperature", group="Weather"),
+    Option("WEATHER_HUMIDITY_COLOR", "color", "Humidity", group="Weather"),
+    Option("WEATHER_WIND_COLOR", "color", "Wind", group="Weather"),
 
-    Option("BUS_ROWS", "int", "Zeilen (3 oder 4)", 1, 4, group="Bus"),
-    Option("BUS_DELAY_RED_MIN", "int", "Verspaetung rot ab (min)", 1, 60, group="Bus"),
-    Option("BUS_MINUTES_COLOR", "color", "Minuten", group="Bus"),
+    Option("BUS_ROWS", "int", "Rows (3 or 4)", 1, 4, group="Departures"),
+    Option("BUS_DELAY_RED_MIN", "int", "Delay red from (min)", 1, 60, group="Departures"),
+    Option("BUS_MINUTES_COLOR", "color", "Minutes", group="Departures"),
 
-    Option("PEGEL_MIN_CM", "int", "Skala von (cm)", 0, 2000, group="Pegel"),
-    Option("PEGEL_MAX_CM", "int", "Skala bis (cm)", 1, 2000, group="Pegel"),
-    Option("PEGEL_WARN_CM", "int", "Marke gelb (cm)", 0, 2000, group="Pegel"),
-    Option("PEGEL_ALARM_CM", "int", "Marke rot (cm)", 0, 2000, group="Pegel"),
-    Option("PEGEL_WATER_COLOR", "color", "Wasser", group="Pegel"),
-    Option("PEGEL_SURFACE_COLOR", "color", "Wellenkamm", group="Pegel"),
+    Option("PEGEL_MIN_CM", "int", "Scale from (cm)", 0, 2000, group="River level"),
+    Option("PEGEL_MAX_CM", "int", "Scale to (cm)", 1, 2000, group="River level"),
+    Option("PEGEL_WARN_CM", "int", "Yellow mark (cm)", 0, 2000, group="River level"),
+    Option("PEGEL_ALARM_CM", "int", "Red mark (cm)", 0, 2000, group="River level"),
+    Option("PEGEL_WATER_COLOR", "color", "Water", group="River level"),
+    Option("PEGEL_SURFACE_COLOR", "color", "Wave crest", group="River level"),
 
-    Option("DWD_ALWAYS_SHOW", "bool", "Auch ohne Warnung zeigen", group="DWD-Warnung"),
-    Option("DWD_BLINK_LEVEL", "int", "Dreieck blinkt ab Stufe", 1, 4, group="DWD-Warnung"),
+    Option("DWD_ALWAYS_SHOW", "bool", "Show without a warning", group="Weather warning"),
+    Option("DWD_BLINK_LEVEL", "int", "Triangle blinks from level", 1, 4, group="Weather warning"),
 
-    Option("TIMEZONE", "choice", "Zeitzone", choices=("Europe/Berlin", "Europe/London", "Europe/Helsinki", "UTC"), live=False, group="System"),
-    Option("WATCHDOG_MS", "int", "Watchdog (ms, 0 = aus)", 0, 8300, live=False, group="System"),
+    Option("TIMEZONE", "choice", "Time zone", choices=("Europe/Berlin", "Europe/London", "Europe/Helsinki", "UTC"), live=False, group="System"),
+    Option("WATCHDOG_MS", "int", "Watchdog (ms, 0 = off)", 0, 8300, live=False, group="System"),
 )
 
 BY_KEY = {option.key: option for option in OPTIONS}

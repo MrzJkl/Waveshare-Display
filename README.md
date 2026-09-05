@@ -1,266 +1,185 @@
-# LED Display (Current Version)
+# LED matrix display on a Raspberry Pi Pico 2 W
 
-**Modulare MicroPython-App fuer HUB75-Panels** mit einer **autonomen Scan-Engine in C (PIO + DMA)**.
-Widgets sind reines Python und zeichnen auf einen `framebuf`; die Engine haelt das Bild flackerfrei.
+Drives a **Waveshare RGB full-colour LED matrix panel** (RGB-Matrix-Pxx series,
+64x32 pixels, HUB75) from a **Raspberry Pi Pico 2 W** over WiFi. The board pulls
+its values from **Home Assistant** over MQTT and shows them on the panel as a
+rotating set of widgets: a clock, the current weather, the next bus departures,
+the Rhine water level and German weather warnings.
 
-## Aktive Struktur
+The panel is refreshed by a small C module using PIO and DMA, so the image is
+rock steady and never flickers. Everything above that, all widgets and all data
+handling, is plain MicroPython.
 
-```text
-main.py
-manifest.py
-app/
-  settings.py
-  runtime.py
-  shared/
-    display.py
-    font.py
-    wifi.py
-    timezone.py
-    timesync.py
-    mqtt.py
-    hass.py
-    config.py
-    web.py
-  widgets/
-    base.py
-    clock/widget.py
-    weather/widget.py
-    weather/icons.py
-    bus/widget.py
-    pegel/widget.py
-    pegel/icons.py
-    dwd/widget.py
-    dwd/icons.py
-native/
-  hub75_native_scan/
-    README.md
-    hub75.h
-    hub75_internal.h
-    hub75_stream.c
-    hub75_pio.c
-    hub75_dma.c
-    hub75_driver.c
-    mod_hub75_native_scan.c
-    micropython.cmake
-tools/
-  generate_local_config.sh
-  run_demo.sh
-  brightness_demo.py
-  color_demo.py
-local_config.example.py
-README.md
-.gitignore
-```
+This is a personal project for one specific display, so a few defaults (city,
+transit stop, river gauge, German labels on the panel) are wired to Bonn,
+Germany.
 
-## Zweck der Dateien
+## Just here for the HUB75 driver?
 
-- [main.py](main.py): schlanker Entrypoint.
-- [app/shared/display.py](app/shared/display.py): Darstellungsebene: `framebuf`-Zeichenflaeche (GS8, ein Byte pro Pixel als Farbindex), Text-Helfer, Helligkeit; uebergibt den Framebuffer an die native Engine.
-- [app/shared/font.py](app/shared/font.py): Bitmap-Fonts (5x7 Text, 3x7 Digitalziffern), gerendert per `framebuf.blit` mit Palette (skalierbar, fett, farbig, optional mit Hintergrund, Mischfarben als Schachbrett zweier Farben, schwarz auf transparentem Grund fuer Konturen).
-- [app/shared/wifi.py](app/shared/wifi.py): WLAN-Verbindung und Status-LED.
-- [app/shared/timesync.py](app/shared/timesync.py): Zeitquelle: nicht blockierender SNTP-Client mit Laufzeitkompensation, Plausibilitaetspruefung und Server-Fallback; laeuft zwischen den Syncs auf dem Millisekunden-Ticker.
-- [app/shared/timezone.py](app/shared/timezone.py): Zeitzonen mit lokal berechneter Sommerzeitregel (EU), z. B. `Europe/Berlin` = CET/CEST.
-- [app/shared/mqtt.py](app/shared/mqtt.py): gemeinsamer MQTT-Client (umqtt.simple) mit Reconnect, Keepalive-Watchdog und Wertespeicher; Widgets melden Topics an und lesen die letzten Werte.
-- [app/shared/hass.py](app/shared/hass.py): HomeAssistant-Schicht darueber: Entity-IDs zu Statestream-Topics, typisierter Zugriff (`state`, `state_float`, `attribute`).
-- [app/shared/config.py](app/shared/config.py): im Betrieb aenderbare Optionen (Whitelist mit Typ und Wertebereich), gespeichert als `settings_override.json` auf dem Geraet und beim Start ueber die Firmware-Defaults gelegt.
-- [app/shared/web.py](app/shared/web.py): kleiner nicht blockierender Webserver, der Status und diese Optionen im Browser anbietet.
-- [app/widgets](app/widgets): ein Ordner pro Widget: [clock](app/widgets/clock/widget.py) (taktische Uhr), [weather](app/widgets/weather/widget.py) (Wetter-Dashboard aus einer HomeAssistant-weather-Entity, Icons in [icons.py](app/widgets/weather/icons.py)), [bus](app/widgets/bus/widget.py) (Abfahrtstafel aus HomeAssistant-Abfahrtssensoren: Linie, Minuten, Verspaetung), [pegel](app/widgets/pegel/widget.py) (Wasserstand als animierte Wasserflaeche mit Hochwassermarken und Trendpfeil), [dwd](app/widgets/dwd/widget.py) (DWD-Warnstufe mit Warndreieck, blendet sich nur bei Warnung ein). [base.py](app/widgets/base.py) beschreibt den Lebenszyklus, [widgets/__init__.py](app/widgets/__init__.py) die Rotation.
-- [app/runtime.py](app/runtime.py): Hauptschleife: Dienste, `service()` aller Widgets, Rotation mit Fade, Zeichnen genau dann, wenn das Widget es will oder seine Daten sich aendern.
-- [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul, das das Panel komplett in Hardware (PIO + DMA) refresht. Aufbau und Funktionsweise sind in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md) erklaert.
-- [manifest.py](manifest.py): Frozen-Manifest fuer den Build.
-- [tools/generate_local_config.sh](tools/generate_local_config.sh): erzeugt `local_config.py` (WLAN- und MQTT-Zugangsdaten, gitignored) aus Env-Variablen und kopiert sie mit `--deploy` auf das Geraet.
-- [tools/run_demo.sh](tools/run_demo.sh): spielt eine visuelle Testsequenz ab (`brightness` oder `color`, laeuft per `mpremote run`, nichts wird geflasht) und startet danach `main.py` neu.
-- [tools/brightness_demo.py](tools/brightness_demo.py), [tools/color_demo.py](tools/color_demo.py): die Testsequenzen fuer Helligkeit/Fading bzw. Farben/Pixelzuordnung.
-- [local_config.example.py](local_config.example.py): Vorlage dafuer.
+Then take just that part. Driving the panel directly from C was the one real
+hurdle in this project, and getting there meant reading a reference driver and
+the RP2350 datasheet rather than any single document. So that piece is
+deliberately self-contained and written up in detail:
 
-## Architektur
+**[native/hub75_native_scan](native/hub75_native_scan/README.md)**
 
-- **Darstellung:** Widgets zeichnen mit `framebuf` auf `display.fb` (64x32, ein Byte pro Pixel,
-  Farbindex 0..7: Bit 0 rot, Bit 1 gruen, Bit 2 blau). `display.show()` uebergibt den Puffer
-  unveraendert an das native Modul, das ihn in seinen DMA-Strom umrechnet.
-- **Refresh:** laeuft vollstaendig ohne CPU. Eine PIO-State-Machine treibt RGB-Daten, CLK, LAT, OE
-  und die Zeilenadresse aus einem vorgebauten Wortstrom; zwei verkettete DMA-Kanaele spielen den
-  Frame endlos ab (Datenkanal -> Steuerkanal setzt die Leseadresse zurueck -> Datenkanal ...).
-  Python darf beliebig lange blockieren (WLAN, NTP, HTTP, Garbage Collection, Rendering), ohne dass
-  das Panel dunkel wird oder flackert. Das ist dasselbe Prinzip wie im Waveshare-/JuPfu-Referenztreiber.
-- **Frame-Wechsel:** doppelt gepuffert. `show_frame()` baut den neuen Frame im Hintergrundpuffer
-  und veroeffentlicht ihn; der DMA uebernimmt ihn an der naechsten Frame-Grenze (kein Tearing).
-- **Zeilen-Sequenz** (pro Scanzeile, Timing aus `settings.py`): naechste Zeile einschieben ->
-  OE aus (Guard) -> LAT-Puls -> Latch-Settle -> neue Zeilenadresse -> Adress-Settle -> Leuchtphase ->
-  Dunkelphase. Leucht- und Dunkelphase teilen sich das Budget `ON_TIME_US`.
-- **Helligkeit:** `display.set_brightness(0.0..1.0)` verschiebt die Grenze zwischen Leucht- und
-  Dunkelphase; die Bildrate bleibt konstant, die Aenderung landet an der naechsten Frame-Grenze.
-  `display.fade_to(level, ms)` rampt weich (Baustein fuer sanfte Widget-Wechsel).
-- **Zeit:** `TimeSync` fragt per SNTP mehrere Server ab (nicht blockierend, mehrere Messungen, die mit der
-  kleinsten Laufzeit gewinnt, Plausibilitaetspruefung) und laeuft dazwischen auf `time.ticks_ms()`.
-  Die Zeitzone rechnet `timezone.py` lokal inklusive Sommerzeit. Vor dem ersten Sync zeigt die Uhr
-  Striche und ein blinkendes `SYNC`; ist der letzte Sync aelter als `TIME_STALE_MS`, wird die
-  Datumszeile gelb.
-- **Widgets:** reines Python, ein Ordner pro Widget. `service(now, ctx)` wird fuer alle Widgets in jedem
-  Schleifendurchlauf gerufen (Daten holen, nicht blockieren, `self.revision` erhoehen, wenn sich etwas
-  geaendert hat). `is_ready(ctx)` steuert die **bedingte Sichtbarkeit**: `False` nimmt das Widget komplett
-  aus der Rotation, `True` bringt es zurueck. So erscheint z. B. das DWD-Widget nur bei einer Warnung und
-  die Abfahrtstafel nur, wenn Abfahrten anstehen. Mindestens ein Widget muss immer sichtbar bleiben, das
-  uebernimmt die Uhr. `draw(display, ctx)` zeichnet einen kompletten Frame auf `display.fb` und gibt zurueck,
-  in wie vielen Millisekunden es wieder gezeichnet werden will (die Uhr: bis zur naechsten
-  Sekundengrenze). `ctx` liefert Netz (`ctx.net`), Zeit (`ctx.time`), MQTT (`ctx.mqtt`) und
-  HomeAssistant (`ctx.hass`).
-- **HomeAssistant:** Daten kommen per MQTT von HomeAssistants `mqtt_statestream` (retained Topics
-  `<base>/<domain>/<object_id>/state` und je Attribut ein Topic). Widgets melden in `service()` die
-  Entitaeten an, die sie brauchen (`ctx.hass.watch_state(...)`), der Broker liefert nur diese; gelesen
-  wird mit `ctx.hass.state_float(...)` usw. Verbindungsabbrueche behandelt der Client selbst.
-- **Runtime:** ruft die Dienste auf, rotiert Widgets alle `WIDGET_ROTATE_MS` mit Aus-/Einblenden
-  (`TRANSITION_MS`) und schlaeft sonst bis zum naechsten Zeichenzeitpunkt.
-- **Konfiguration im Betrieb:** Der Pico oeffnet einen kleinen Webserver (Adresse steht im Boot-Log,
-  z. B. `http://192.168.178.162/`). Dort lassen sich Helligkeit, aktive Widgets, Wechselzeit, Farben und
-  Schwellwerte aendern; die meisten Werte greifen mit dem naechsten Bild, nur wenige brauchen einen
-  Neustart (in der Seite markiert). Geaenderte Werte landen als `settings_override.json` auf dem
-  Geraete-Dateisystem und werden beim Start ueber die Defaults aus `settings.py` gelegt, ein Flashen ist
-  dafuer also nicht noetig. Gespeichert werden nur echte Abweichungen, damit spaetere Aenderungen an den
-  Defaults weiter wirken. "Werkseinstellungen" loescht die Datei und startet neu. Aenderbar ist nur die
-  Whitelist in [config.py](app/shared/config.py): Zugangsdaten stehen nicht darin und erscheinen nicht
-  auf der Seite. Es gibt **keine Anmeldung**, jeder im Netz kann die Anzeige umstellen und neu starten;
-  `WEB_ENABLED = False` schaltet den Server ab.
-- **Display an und aus:** `/on`, `/off` und `/toggle` (GET oder POST) schalten das Panel dunkel bzw.
-  hell. "Aus" heisst Helligkeit null: die Scan-Engine laeuft weiter, das Einschalten ist sofort da und
-  wird weich eingeblendet. Der Zustand wird gespeichert, ein Reboot bleibt also aus. `/status` liefert
-  denselben Zustand als JSON.
+It is a MicroPython user C module: point `-DUSER_C_MODULES` at it, and Python
+gets `init()`, `show_frame(framebuffer)` and `set_brightness()` for a panel that
+refreshes itself. Its C API in `hub75.h` has no MicroPython dependency, so the
+same code works in a plain pico-sdk project. The README there explains the HUB75
+protocol, the PIO program, the DMA chain, the double buffering and the timing
+arithmetic from the ground up, including the mistakes that cause flicker and
+ghosting, so you should not have to reverse engineer any of it.
 
-Damit kannst du spaeter leicht z. B. Wetter, HomeAssistant oder Kalender als eigene Widgets einhaengen.
+The Python side of this repository is then one example of what you can build on
+top of it.
 
-### Native API (`hub75_native_scan`)
+## In short
 
-| Funktion | Zweck |
+| | |
 | --- | --- |
-| `init(width, scan_rows, r1, g1, b1, r2, g2, b2, row_base_pin, row_n_pins, clk_pin, lat_pin, oe_pin, *, on_time_us=32, pio_clkdiv=2.0, clk_half_cycles=4, oe_guard_ns=60, latch_ns=120, addr_ns=200, brightness=65535)` | startet den autonomen Refresh (Panel zunaechst dunkel) |
-| `show_frame(buf)` | neuen Frame anzeigen: `width * height` Bytes, ein Farbindex pro Pixel (z. B. der Puffer eines `framebuf` GS8) |
-| `set_brightness(level)` | Helligkeit 0..65535 (linearer Tastgrad) bei konstanter Bildrate |
-| `set_on_time_us(us)` | Zeitbudget pro Zeile aendern (Bildrate) |
-| `stats()` | Dict mit PIO/DMA-Zuordnung, Pixeltakt, Zeilen-/Frame-Zeit |
-| `measure_frame_rate(ms=200)` | gemessene Bildwiederholrate in Hz (Diagnose) |
-| `is_running()` | `True`, solange der DMA-Loop laeuft |
-| `deinit()` | Refresh stoppen, Panel dunkel, PIO/DMA freigeben |
+| Panel | Waveshare RGB full-colour LED matrix, 64x32, HUB75, 1/16 scan |
+| Board | Raspberry Pi Pico 2 W (RP2350, WiFi) |
+| Firmware | MicroPython plus a HUB75 user C module (PIO + DMA) |
+| Data | Home Assistant over MQTT (MQTT Statestream), no direct API calls |
+| Time | SNTP with local daylight saving rules |
+| Configuration | web page served by the board, no reflash needed |
+| Refresh rate | about 1.7 kHz, no CPU involvement |
 
-Grenzen: `MAX_WIDTH = 128`, `MAX_SCAN_ROWS = 32` (statische Puffer, ca. 36 KB RAM).
+## What it shows
 
-### Timing-Einstellungen
-
-| Setting | Default | Bedeutung |
+| Widget | Shows | Needs |
 | --- | --- | --- |
-| `ON_TIME_US` | 32 | Zeitbudget pro Zeile fuer Leucht- + Dunkelphase; 16 Zeilen -> ca. 1.7 kHz Refresh |
-| `BRIGHTNESS` | 1.0 | wahrgenommene Helligkeit 0.0..1.0 beim Start |
-| `BRIGHTNESS_GAMMA` | 2.2 | Umrechnung wahrgenommen -> Tastgrad, damit Rampen gleichmaessig wirken |
-| `FADE_STEP_MS` | 16 | Schrittweite von `fade_to()` |
-| `NATIVE_PIO_CLKDIV` | 2.0 | PIO-Takt = CPU-Takt / clkdiv (wie `SM_CLOCKDIV_FACTOR` im Waveshare-Beispiel) |
-| `NATIVE_CLK_HALF_CYCLES` | 4 | PIO-Zyklen pro CLK-Halbperiode -> Pixeltakt 250 MHz / 2 / 8 = 15.6 MHz |
-| `NATIVE_OE_GUARD_NS` | 60 | Dunkelphase vor dem Latch (`BASE_OE_NS`) |
-| `NATIVE_LATCH_NS` | 120 | Latch-Puls und Latch-Settle (`BASE_LATCH_NS`) |
-| `NATIVE_ADDR_NS` | 200 | Settle nach Adresswechsel vor OE (`BASE_ADDR_NS`) |
+| `clock` | time with seconds, weekday and date | nothing (always visible) |
+| `weather` | condition icon, temperature, humidity, wind | a Home Assistant `weather` entity |
+| `dwd` | German weather warning level, only while one is active | two DWD warning sensors |
+| `bus` | next departures with line, minutes and delay | departure sensors with a `times` attribute |
+| `pegel` | river level as an animated water surface with flood marks | a water level sensor in cm |
 
-Bei Ghosting oder Bildfehlern zuerst `NATIVE_PIO_CLKDIV` erhoehen (z. B. 3.0), danach die ns-Werte.
-Die Herleitung der Werte und eine Symptom-Tabelle stehen in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md).
+Widgets rotate every few seconds with a soft fade. A widget can hide itself
+when it has nothing to say, which is why the warning level only shows up while
+a warning is active and the departure board disappears at night.
 
-### Zeit und Uhr
+## Beyond the panel
 
-| Setting | Default | Bedeutung |
-| --- | --- | --- |
-| `TIMEZONE` | `Europe/Berlin` | Zone aus `app/timezone.py` (CET/CEST mit EU-Regel) |
-| `NTP_HOSTS` | Router, `pool.ntp.org`, `time.cloudflare.com` | Reihenfolge der Zeitserver; nach einem Fehlschlag wird zum naechsten gewechselt |
-| `NTP_SAMPLES` | 3 | Messungen pro Sync, die mit der kleinsten Laufzeit wird uebernommen |
-| `NTP_MAX_DELAY_MS` | 500 | Antworten mit groesserer Laufzeit werden verworfen |
-| `NTP_RESYNC_MS` | 1 h | Abstand zwischen erfolgreichen Syncs |
-| `TIME_STALE_MS` | 6 h | danach gilt die Zeit als veraltet (Datumszeile gelb) |
-| `CLOCK_TIME_COLOR`, `CLOCK_DATE_COLOR` | weiss, rot | Farben der Uhr (Farbindex 0..7) |
-| `CLOCK_WEEKDAYS` | `MO`..`SO` | Wochentagskuerzel |
-| `WIDGET_ROTATE_MS`, `TRANSITION_MS` | 15 s, 400 ms | Widget-Wechsel und Fade-Dauer |
-| `WEATHER_ENTITY`, `WEATHER_*_COLOR` | `weather.bonn_friesdorf` | Wetter-Entity und Farben |
-| `BUS_ENTITIES`, `BUS_ROWS` | 6 Linien, 4 Zeilen | Abfahrtssensoren (eine Entity pro Linie und Richtung) und Zeilenzahl (3 oder 4) |
-| `BUS_LINE_COLORS`, `BUS_LINE_COLOR` | 606/607 gruen, 608/609 orange, Nachtlinien weiss | Farbe der Liniennummer wie auf den echten Anzeigen; `(1, 3)` ist ein Rot/Gelb-Schachbrett, das orange wirkt |
-| `BUS_MINUTES_COLOR`, `BUS_DELAY_RED_MIN` | weiss, 5 | Farbe der Minuten; ab so vielen Minuten Verspaetung rot statt gelb |
-| `PEGEL_ENTITY` | `sensor.rhein_pegel_bonn_wasserstand` | Wasserstand in cm aus HomeAssistant |
-| `PEGEL_MIN_CM`, `PEGEL_MAX_CM` | 0, 800 | Skala der Wasserflaeche: leeres bis volles Bild |
-| `PEGEL_MARKS`, `PEGEL_WARN_CM`, `PEGEL_ALARM_CM` | 620 gelb, 750 rot | gestrichelte Hochwassermarken; ab `WARN` Zahl gelb, ab `ALARM` rot und blinkend. **Werte fuer den Pegel Bonn pruefen** |
-| `PEGEL_TREND_WINDOW_MS`, `PEGEL_TREND_MIN_CM` | 3 h, 2 cm | Zeitfenster und Schwelle fuer den Trendpfeil |
-| `PEGEL_WAVE_MS`, `PEGEL_WATER_COLOR`, `PEGEL_SURFACE_COLOR` | 160 ms, blau, cyan | Tempo der Wellenanimation und Farben |
-| `DWD_CURRENT_ENTITY`, `DWD_PREWARN_ENTITY` | Stadt Bonn | Sensoren fuer aktuelle Warnstufe und Vorwarnstufe |
-| `DWD_ALWAYS_SHOW` | aus | aus: Widget erscheint nur bei Warnung oder Vorwarnung; an: zeigt auch "KEINE WARNUNG" |
-| `DWD_BLINK_LEVEL`, `DWD_LEVEL_COLORS` | 3, 1 gelb / 2 orange / 3 rot / 4 magenta | ab dieser Stufe blinkt das Dreieck; Farbe je Stufe (Panel hat kein Orange, `(1, 3)` ist ein Rot/Gelb-Schachbrett) |
-| `WIDGETS_ENABLED` | alle | Widgets in der Rotation; leere Liste = alle (so kann die Weboberflaeche das Panel nicht leer schalten) |
-| `WEB_ENABLED`, `WEB_PORT` | an, 80 | Webserver fuer die Konfiguration im Betrieb |
-| `WATCHDOG_MS` | 0 (aus) | Hardware-Watchdog fuer den Dauerbetrieb, siehe unten |
+- **Configurable while running.** A small web server on the board serves a
+  status page and a settings form: brightness, active widgets, rotation speed,
+  colours and thresholds. Values are stored on the device and survive a reboot.
+- **Webhooks.** `/on`, `/off` and `/toggle` switch the panel dark or bright and
+  `/status` returns the state as JSON, so a Home Assistant automation can
+  control the display.
+- **Built for unattended operation.** A crashing widget is dropped instead of
+  taking the display down, an error outside the widgets reboots the board, and
+  an optional hardware watchdog covers a hang.
 
-## Schnellstart
+## How it works
 
-1. Lokale Konfiguration (WLAN und MQTT) erzeugen und auf das Geraet kopieren. Sie wird nicht in die
-   Firmware eingefroren, Passwortwechsel brauchen also keinen Neubau:
+Three layers, from the hardware upwards.
+
+**Scan engine (C).** `native/hub75_native_scan` is a MicroPython user C module.
+It builds a word stream that a PIO program plays with cycle-exact timing, and
+two chained DMA channels loop that stream forever. Frames are double buffered,
+so a new frame appears without tearing and without a dark gap. Brightness is a
+duty cycle inside the same row period, which keeps the refresh rate constant.
+The [module README](native/hub75_native_scan/README.md) explains the whole
+mechanism from the HUB75 protocol upwards; it is the place to start if you want
+to understand or reuse the driver.
+
+**Rendering (Python).** `app/shared/display.py` owns a `framebuf.FrameBuffer`
+in GS8 format: one byte per pixel holding a colour index from 0 to 7 (bit 0
+red, bit 1 green, bit 2 blue). Passing a pair of colours draws a checkerboard
+of both, which reads as a mixed colour on the panel, for example red and yellow
+as orange. `app/shared/font.py` renders bitmap fonts through `framebuf.blit`,
+so text costs almost nothing.
+
+**Widgets and services (Python).** `app/runtime.py` runs one loop: it services
+WiFi, time sync, MQTT and the web server, lets every widget update its data,
+then draws the current widget and sleeps until the next interesting moment.
+Widgets live in `app/widgets/<name>/` and implement three methods, described in
+[app/widgets/base.py](app/widgets/base.py):
+
+- `service(now, ctx)` fetches data without blocking and bumps `self.revision`
+  when something changed
+- `is_ready(ctx)` decides whether the widget is visible at all
+- `draw(display, ctx)` paints a frame and returns the milliseconds until the
+  next draw
+
+Time comes from a non-blocking SNTP client with round-trip compensation and a
+server list; the time zone including daylight saving is computed locally in
+`app/shared/timezone.py`.
+
+## Build and flash
+
+You need the MicroPython source tree with its submodules (tested against the
+rp2 port at 1.30-dev with pico-sdk 2.3.0), `arm-none-eabi-gcc`, `cmake` and
+`mpremote`.
 
 ```bash
-WIFI_SSID='dein-ssid' WIFI_PASSWORD='dein-passwort' \
-MQTT_HOST='192.168.178.2' MQTT_USER='display' MQTT_PASSWORD='geheim' \
-./tools/generate_local_config.sh --deploy
-```
+export MPY=~/micropython          # MicroPython checkout
+export APP=~/pico/led-display     # this repository
 
-2. MicroPython RP2 Firmware mit Frozen Manifest und nativem Modul bauen (im separaten MicroPython-Checkout):
-
-```bash
-cd /home/moritz/micropython/ports/rp2
-cmake -S . -B build-RPI_PICO2_W-min \
+cd "$MPY/ports/rp2"
+cmake -S . -B build-display \
   -DMICROPY_BOARD=RPI_PICO2_W \
-  -DMICROPY_FROZEN_MANIFEST=/home/moritz/pico/led-display/manifest.py \
-  -DUSER_C_MODULES=/home/moritz/pico/led-display/native/hub75_native_scan/micropython.cmake
-cmake --build build-RPI_PICO2_W-min -j"$(nproc)"
+  -DMICROPY_FROZEN_MANIFEST="$APP/manifest.py" \
+  -DUSER_C_MODULES="$APP/native/hub75_native_scan/micropython.cmake"
+cmake --build build-display -j"$(nproc)"
 ```
 
-Wichtig: `-DUSER_C_MODULES` muss gesetzt sein. Ohne natives Modul startet die App nicht
-(`hub75_native_scan module missing`), einen Python-Scan-Fallback gibt es nicht mehr.
+`-DUSER_C_MODULES` is required; without the native module the application
+refuses to start. The manifest freezes the whole `app` package into the
+firmware, so there is nothing to copy but the credentials.
 
-3. UF2 flashen (BOOTSEL-Taste oder per USB in den Bootloader):
+Write the credentials and copy them to the board:
+
+```bash
+cd "$APP"
+WIFI_SSID='your-ssid' WIFI_PASSWORD='your-password' \
+MQTT_HOST='192.168.1.2' MQTT_USER='display' MQTT_PASSWORD='secret' \
+  ./tools/generate_local_config.sh --deploy
+```
+
+That writes `local_config.py` (gitignored, never frozen) and copies it to the
+device filesystem, so a password change needs no rebuild.
+
+Flash the firmware:
 
 ```bash
 mpremote bootloader
-cp /home/moritz/micropython/ports/rp2/build-RPI_PICO2_W-min/firmware.uf2 /run/media/$USER/RP2350/
+cp "$MPY/ports/rp2/build-display/firmware.uf2" /run/media/$USER/RP2350/
 ```
 
-4. Adresse der Weboberflaeche steht im Boot-Log (`web: http://.../`); dort Helligkeit, aktive Widgets,
-   Farben und Schwellwerte im Browser aendern, ohne neu zu flashen.
+The board prints its address on the serial console after booting
+(`web: http://192.168.1.42/`); that page shows the status and the settings.
 
-5. Pruefen (unterbricht `main.py`, das Panel laeuft dank Hardware-Refresh weiter):
+## Configuration
 
-```bash
-mpremote exec "import hub75_native_scan as h; print(h.stats()); print(h.measure_frame_rate(500))"
-mpremote reset   # danach main.py wieder starten
-```
+`app/settings.py` holds the defaults for everything: wiring, panel timing,
+brightness, rotation, the entity ids each widget reads, and the colours.
 
-Achtung: `mpremote soft-reset` startet `main.py` nicht (Soft-Reset im Raw-REPL laeuft ohne
-`main.py`). Zum Neustart `mpremote reset` verwenden oder im `mpremote repl` Strg-D druecken.
+A curated subset of those settings is editable at runtime through the web page.
+The chosen values are stored as `settings_override.json` on the device and
+applied on top of the defaults at boot, so they survive a reboot without a new
+firmware. Only real deviations are stored, which means a later change to a
+default in `settings.py` still takes effect. "Factory reset" deletes the file.
+The editable list lives in `app/shared/config.py`; credentials are deliberately
+not part of it and never appear on the page. There is **no authentication**:
+anybody on the network can change the display and reboot it. Set
+`WEB_ENABLED = False` to switch the server off.
 
-6. Am Panel pruefen (Testsequenzen, danach startet `main.py` automatisch neu):
+## Adding a widget
 
-```bash
-./tools/run_demo.sh brightness   # Helligkeit und Fading, ca. 60 s
-./tools/run_demo.sh color        # Farben und Pixelzuordnung, ca. 25 s
-```
+Create `app/widgets/<name>/` with an `__init__.py` and a `widget.py`, derive
+from `Widget` and list it in `app/widgets/__init__.py`. The manifest freezes the
+package recursively, so there is nothing else to register. Fonts available to a
+widget are `display.font` (5x7 text) and `app.shared.font.FONT_DIGITAL` (3x7
+digits); colours are the indices 0 to 7 from `app/shared/display.py`.
 
-Die Skripte schreiben zu jedem Test auf die Konsole, was auf dem Panel zu sehen sein soll. Wirken bei
-`brightness` die unteren Stufen zu dunkel oder zu hell, `GAMMA` im Skript aendern und den passenden
-Wert nach `BRIGHTNESS_GAMMA` in `settings.py` uebernehmen.
+## Home Assistant
 
-Hinweis: `local_config.py` ist absichtlich nicht versioniert und liegt nur lokal und auf dem Geraet.
-
-### Dauerbetrieb
-
-- **Fehler in einem Widget** (kaputte Daten, Bug) nehmen nur dieses Widget aus der Rotation; die
-  Meldung steht auf der Konsole und die Weboberflaeche zeigt sie unter "Widget-Fehler".
-- **Fehler ausserhalb der Widgets** blinken den Fehlercode auf der Status-LED und starten dann neu,
-  statt mit stehendem Bild haengen zu bleiben.
-- **Watchdog:** `WATCHDOG_MS = 8000` (auch ueber die Weboberflaeche, Neustart noetig) startet das Board
-  neu, falls die Hauptschleife haengt. Zum Entwickeln auf `0` lassen: eingeschaltet startet das Board
-  auch dann neu, wenn `main.py` per `mpremote` unterbrochen wird, also auch bei `tools/run_demo.sh`.
-
-### HomeAssistant vorbereiten
-
-Mosquitto-Add-on installieren, einen HA-Benutzer `display` anlegen, die MQTT-Integration verbinden und in
-`configuration.yaml` Statestream aktivieren (danach HA neu starten):
+Install the Mosquitto broker add-on, create a user for the display, connect the
+MQTT integration, then publish the entity states with
+[MQTT Statestream](https://www.home-assistant.io/integrations/mqtt_statestream/):
 
 ```yaml
 mqtt_statestream:
@@ -269,46 +188,66 @@ mqtt_statestream:
   publish_timestamps: false
 ```
 
-`base_topic` muss zu `HASS_BASE_TOPIC` in `settings.py` passen. Welche Topics ankommen, zeigt
-`mosquitto_sub -h <HA-IP> -u display -P '...' -t 'statestream/#' -v`.
+`base_topic` has to match `HASS_BASE_TOPIC` in `app/settings.py`. Statestream
+publishes every entity as retained topics
+(`statestream/<domain>/<object_id>/state` plus one topic per attribute), and a
+widget subscribes to exactly the topics it needs, so the board only receives
+those. `mosquitto_sub -t 'statestream/#' -v` shows what is available.
 
-### Display aus HomeAssistant schalten
-
-In `configuration.yaml` (Adresse anpassen):
+Switching the panel from an automation:
 
 ```yaml
 rest_command:
-  display_ein:
-    url: "http://192.168.178.162/on"
+  display_on:
+    url: "http://192.168.1.42/on"
     method: post
-  display_aus:
-    url: "http://192.168.178.162/off"
+  display_off:
+    url: "http://192.168.1.42/off"
     method: post
 
 binary_sensor:
   - platform: rest
     name: LED Display
-    resource: "http://192.168.178.162/status"
+    resource: "http://192.168.1.42/status"
     value_template: "{{ value_json.display_on }}"
     scan_interval: 60
 ```
 
-Damit laesst sich das Display in Automationen mit `rest_command.display_aus` bzw. `display_ein`
-schalten, und der Zustand ist als `binary_sensor.led_display` lesbar. Zum Testen von der Kommandozeile:
+"Off" means brightness zero: the scan engine keeps running, so switching back
+on is instant and fades in softly. The state is persisted, so it also survives
+a reboot.
+
+## Unattended operation
+
+- A widget that raises in `service`, `is_ready` or `draw` is logged once,
+  marked as failed and dropped from the rotation. The others keep running and
+  the web page lists the failure.
+- An error outside the widgets blinks the error code on the on-board LED and
+  reboots, instead of leaving a frozen image behind.
+- `WATCHDOG_MS = 8000` arms the hardware watchdog, which reboots the board if
+  the main loop hangs. Leave it at `0` while developing: once armed it also
+  reboots whenever `mpremote` interrupts `main.py`, which includes the test
+  sequences below.
+
+## Panel test sequences
 
 ```bash
-curl -X POST http://192.168.178.162/off
-curl -X POST http://192.168.178.162/on
-curl -s http://192.168.178.162/status
+./tools/run_demo.sh brightness   # brightness steps, fades, soft widget change
+./tools/run_demo.sh color        # colour bars, pixel mapping, text, speed
 ```
 
-## Neues Widget hinzufuegen
+Both run over `mpremote` without flashing anything, print what should be
+visible for every step, and restart the application afterwards.
 
-1. Ordner `app/widgets/dein_widget/` mit `__init__.py` und `widget.py` anlegen, Klasse von `Widget`
-   ableiten (siehe [base.py](app/widgets/base.py)): Daten in `service(now, ctx)` holen, Frame in
-   `draw(display, ctx)` zeichnen (`display.clear()`, `display.text(...)`, `display.text_center(...)`,
-   `display.fb.rect(...)` usw.) und zurueckgeben, nach wie vielen Millisekunden neu gezeichnet werden soll.
-   Fonts: `display.font` (5x7, Buchstaben/Ziffern/Satzzeichen) und `app.shared.font.FONT_DIGITAL` (3x7-Ziffern).
-   Ein eigener Datenclient (REST, MQTT, Sensor) gehoert als weitere Datei in denselben Ordner.
-2. Widget in [app/widgets/__init__.py](app/widgets/__init__.py) in `create_default_widgets()` aufnehmen.
-   Das Manifest friert das ganze Paket `app` ein, dort ist nichts zu tun.
+## Notes
+
+- Text on the panel is German, because the data sources are (DWD warnings,
+  Bonn transit, Rhine gauge). Weekday abbreviations are a setting; the rest sits
+  in the widget that draws it.
+- The flood marks for the Bonn gauge (620 cm and 750 cm) are placeholders and
+  should be checked against the official values.
+- The PIO and DMA approach of the scan engine follows the
+  [JuPfu/hub75](https://github.com/JuPfu/hub75) driver that Waveshare ships as
+  its Pico example, which in turn goes back to the Raspberry Pi HUB75 example.
+  The code here was written from scratch for MicroPython and only borrows the
+  design.

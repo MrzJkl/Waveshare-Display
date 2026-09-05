@@ -1,8 +1,8 @@
-# Visueller Test fuer Farben und Pixelzuordnung auf dem Panel.
+# Visual test for colours and pixel mapping on the panel.
 #
-# Start vom Host:   ./tools/run_demo.sh color
+# Run from the host:  ./tools/run_demo.sh color
 #
-# Laeuft ca. 25 s. Zu jedem Test steht auf der Konsole, was zu sehen sein soll.
+# Takes about 25 s and prints for every test what should be visible.
 
 import time
 
@@ -11,30 +11,31 @@ from app.shared.display import Hub75Display, BLACK, RED, GREEN, YELLOW, BLUE, MA
 
 def step(n, title, expect, seconds):
     print()
-    print("=== Test %d: %s (%d s) ===" % (n, title, seconds))
-    print("    Erwartung: " + expect)
+    print("=== test %d: %s (%d s) ===" % (n, title, seconds))
+    print("    expect: " + expect)
 
 
 def main():
     d = Hub75Display()
     w, h = d.width, d.height
 
-    step(1, "Farbbalken",
-         "Acht senkrechte Balken von links nach rechts: schwarz, rot, gruen, gelb, blau, "
-         "magenta, cyan, weiss. Jeder 8 Pixel breit ueber die volle Hoehe, obere und untere "
-         "Haelfte identisch. Stimmt die Reihenfolge nicht, sind R/G/B-Pins vertauscht.", 6)
+    step(1, "colour bars",
+         "eight vertical bars from left to right: black, red, green, yellow, blue, "
+         "magenta, cyan, white. Each 8 pixels wide over the full height, upper and "
+         "lower half identical. A wrong order means the R/G/B pins are swapped.", 6)
     d.clear()
     for i, colour in enumerate((BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE)):
         d.fb.fill_rect(i * (w // 8), 0, w // 8, h, colour)
     d.show()
     time.sleep(6)
 
-    step(2, "Rahmen, Ecken, Haelften",
-         "Weisser Rahmen um das ganze Panel, kein Pixel fehlt. Innen in den Ecken je ein Pixel: "
-         "oben links rot, oben rechts gruen, unten links blau, unten rechts gelb. "
-         "In der Mitte zwei Linien direkt untereinander: Zeile 15 magenta (letzte Zeile der "
-         "oberen Haelfte), Zeile 16 cyan (erste der unteren). Luecke oder Versatz dazwischen "
-         "waere ein Fehler in der Haelften-Zuordnung.", 6)
+    step(2, "border, corners, halves",
+         "a white border around the whole panel with no pixel missing. One pixel "
+         "inside each corner: top left red, top right green, bottom left blue, "
+         "bottom right yellow. In the middle two lines directly above each other: "
+         "row 15 magenta (last row of the upper half), row 16 cyan (first of the "
+         "lower half). A gap or an offset between them would mean the half mapping "
+         "is wrong.", 6)
     d.clear()
     d.fb.rect(0, 0, w, h, WHITE)
     d.fb.pixel(1, 1, RED)
@@ -46,9 +47,10 @@ def main():
     d.show()
     time.sleep(6)
 
-    step(3, "Text in Farben",
-         "Oben '12:34' gross in gelb, unten links 'T21C' klein in cyan, unten rechts 'HA' "
-         "klein weiss auf blauem Hintergrund. Alle Zeichen scharf, keine Geisterpixel.", 6)
+    step(3, "coloured text",
+         "'12:34' large in yellow at the top, 'T21C' small in cyan at the bottom "
+         "left, 'HA' small in white on a blue background at the bottom right. All "
+         "characters crisp, no ghost pixels.", 6)
     d.clear()
     d.text_center("12:34", YELLOW, 2, 1)
     d.text("T21C", 2, 22, CYAN, 1)
@@ -56,19 +58,19 @@ def main():
     d.show()
     time.sleep(6)
 
-    step(4, "Update-Geschwindigkeit",
-         "Ein weisser Balken laeuft in 2 s einmal von links nach rechts durch, fluessig.", 2)
+    step(4, "update speed",
+         "a white bar sweeps once from left to right over 2 s, smoothly.", 2)
     for x in range(w):
         d.clear()
         d.fb.fill_rect(x, 0, 2, h, WHITE)
         d.show()
         time.sleep_ms(2000 // w)
 
-    step(5, "Zurueck", "'--:--' in der Standardfarbe.", 1)
+    step(5, "back", "'--:--' in the default colour.", 1)
     d.show_text("--:--")
 
     print()
-    print("Fertig. Normale Anzeige zurueckholen mit: mpremote reset")
+    print("done. Bring back the normal display with: mpremote reset")
 
 
 main()

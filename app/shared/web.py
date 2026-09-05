@@ -235,11 +235,11 @@ class WebServer:
             values["WIDGETS_ENABLED"] = []
         changed, restart = config.update(values, self.widget_names)
         if not changed:
-            self._notice = "Keine Aenderung."
+            self._notice = "No change."
         elif restart:
-            self._notice = "%d Aenderung(en) gespeichert, fuer %s ist ein Neustart noetig." % (len(changed), ", ".join(restart))
+            self._notice = "Saved %d change(s); %s needs a restart." % (len(changed), ", ".join(restart))
         else:
-            self._notice = "%d Aenderung(en) uebernommen." % len(changed)
+            self._notice = "Applied %d change(s)." % len(changed)
         print("web: saved", changed)
 
     def _reboot(self, conn):
@@ -291,15 +291,15 @@ class WebServer:
                 group = option.group
                 write("<h2>%s</h2><table>" % esc(group))
             write("<tr><td class=l>%s%s</td><td>%s</td></tr>"
-                  % (esc(option.label), "" if option.live else " <small>(Neustart)</small>", self._field(option)))
+                  % (esc(option.label), "" if option.live else " <small>(restart)</small>", self._field(option)))
         write("</table>")
-        write("<button type=submit>Speichern</button></form>")
+        write("<button type=submit>Save</button></form>")
         if settings.DISPLAY_ON:
-            write("<form method=post action=/off><button class=w>Display aus</button></form>")
+            write("<form method=post action=/off><button class=w>Turn display off</button></form>")
         else:
-            write("<form method=post action=/on><button>Display ein</button></form>")
-        write("<form method=post action=/restart><button class=w>Neustart</button></form>")
-        write("<form method=post action=/reset><button class=w>Werkseinstellungen</button></form>")
+            write("<form method=post action=/on><button>Turn display on</button></form>")
+        write("<form method=post action=/restart><button class=w>Restart</button></form>")
+        write("<form method=post action=/reset><button class=w>Factory reset</button></form>")
         write("</body></html>")
 
     def _field(self, option):

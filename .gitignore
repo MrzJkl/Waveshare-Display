@@ -38,5 +38,5 @@ __pycache__/
 # Generated MicroPython runtime config
 local_config.py
 
-# Runtime-Optionen, die per Weboberflaeche gesetzt wurden (nur auf dem Geraet)
+# Runtime options set through the web page (device only)
 settings_override.json

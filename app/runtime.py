@@ -184,16 +184,16 @@ def _run(status_led):
         now_state = state()
         seconds = now_state["uptime_s"]
         return (
-            ("Display", "an" if now_state["display_on"] else "aus"),
-            ("Adresse", now_state["address"] or "nicht verbunden"),
-            ("Laufzeit", "%dh %02dm" % (seconds // 3600, seconds % 3600 // 60)),
-            ("Zeit", "%s %s" % (now_state["time"], now_state["zone"]) if now_state["time"] else "nicht synchron"),
-            ("MQTT", "verbunden" if now_state["mqtt"] else "getrennt"),
+            ("Display", "on" if now_state["display_on"] else "off"),
+            ("Address", now_state["address"] or "not connected"),
+            ("Uptime", "%dh %02dm" % (seconds // 3600, seconds % 3600 // 60)),
+            ("Time", "%s %s" % (now_state["time"], now_state["zone"]) if now_state["time"] else "not synced"),
+            ("MQTT", "connected" if now_state["mqtt"] else "disconnected"),
             ("Widget", now_state["widget"]),
-            ("Widget-Fehler", ", ".join(w.name for w in widgets if w.failed) or "keine"),
-            ("Helligkeit aktiv", "%.2f" % now_state["brightness"]),
-            ("Bildrate", "%d Hz" % now_state["frame_hz"]),
-            ("Freier Speicher", "%d KB" % (now_state["mem_free"] // 1024)),
+            ("Widget errors", ", ".join(w.name for w in widgets if w.failed) or "none"),
+            ("Brightness (active)", "%.2f" % now_state["brightness"]),
+            ("Frame rate", "%d Hz" % now_state["frame_hz"]),
+            ("Free memory", "%d KB" % (now_state["mem_free"] // 1024)),
         )
 
     web = WebServer([widget.name for widget in widgets], status, state)
