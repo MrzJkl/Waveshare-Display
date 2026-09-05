@@ -19,15 +19,32 @@ class HomeAssistant:
     def __init__(self, mqtt, base_topic):
         self.mqtt = mqtt
         self.base_topic = base_topic
+        # Topic strings are cached: widgets ask for the same ones on every loop
+        # pass, and building them there would allocate a few dozen strings per
+        # pass, which shows up as garbage collector pauses in animations.
+        self._state_topics = {}
+        self._attribute_topics = {}
 
     # --- topics -----------------------------------------------------------
     def state_topic(self, entity_id):
-        domain, object_id = entity_id.split(".", 1)
-        return "%s/%s/%s/state" % (self.base_topic, domain, object_id)
+        topic = self._state_topics.get(entity_id)
+        if topic is None:
+            domain, object_id = entity_id.split(".", 1)
+            topic = "%s/%s/%s/state" % (self.base_topic, domain, object_id)
+            self._state_topics[entity_id] = topic
+        return topic
 
     def attribute_topic(self, entity_id, attribute):
-        domain, object_id = entity_id.split(".", 1)
-        return "%s/%s/%s/%s" % (self.base_topic, domain, object_id, attribute)
+        per_entity = self._attribute_topics.get(entity_id)
+        if per_entity is None:
+            per_entity = {}
+            self._attribute_topics[entity_id] = per_entity
+        topic = per_entity.get(attribute)
+        if topic is None:
+            domain, object_id = entity_id.split(".", 1)
+            topic = "%s/%s/%s/%s" % (self.base_topic, domain, object_id, attribute)
+            per_entity[attribute] = topic
+        return topic
 
     # --- registration -------------------------------------------------------
     def watch_state(self, entity_id):

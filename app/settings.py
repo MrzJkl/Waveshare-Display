@@ -59,7 +59,7 @@ WIDGET_ROTATE_MS = 15000       # widget change; 0 shows only the first widget
 TRANSITION_MS = 400            # fade out and in on a widget change; 0 is a hard cut
 # Widgets in the rotation (names from app/widgets); empty means all of them. A
 # widget can also hide itself, see is_ready() in app/widgets/base.py.
-WIDGETS_ENABLED = ("clock", "weather", "dwd", "bus", "pegel")
+WIDGETS_ENABLED = ("clock", "weather", "dwd", "bus", "pegel", "fuel")
 
 # Small web server for changing options while running (app/shared/web.py).
 # No authentication: anybody on the network can change colours and reboot.
@@ -123,6 +123,19 @@ PEGEL_WAVE_MS = 160            # step of the wave animation
 PEGEL_WATER_COLOR = 4          # blue
 PEGEL_SURFACE_COLOR = 6        # cyan
 PEGEL_NUMBER_COLOR = 7         # white
+
+# Fuel price widget: Tankerkoenig sensors in Home Assistant, one per station
+# and fuel type; the state is the price in Euro. The cheapest one is shown.
+FUEL_ENTITIES = (
+    "sensor.aral_rochusstrasse_46_super_e10",
+    "sensor.bft_endenicher_str_157_super_e10",
+    "sensor.shell_hermann_wandersleb_ring_super_e10",
+)
+FUEL_LABEL = "E10"             # prefix in front of the scrolling name, "" for none
+FUEL_NAMES = {}                # optional shorter names, keyed by entity id
+FUEL_PRICE_COLOR = 3           # yellow, like a fuel price sign
+FUEL_NAME_COLOR = 7            # white
+FUEL_SCROLL_MS = 60            # marquee: one pixel per step
 
 # DWD warning level widget: two Home Assistant sensors (current level and advance notice)
 DWD_CURRENT_ENTITY = "sensor.stadt_bonn_aktuelle_warnstufe"

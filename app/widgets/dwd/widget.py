@@ -19,6 +19,7 @@ import time
 
 from app import settings
 from app.shared.display import BLACK
+from app.shared.text import fit, plain
 from app.widgets.base import Widget
 from app.widgets.dwd.icons import HEIGHT as ICON_H, ICONS, WIDTH as ICON_W
 
@@ -31,14 +32,6 @@ TEXT_X = ICON_W + 2
 LINE_A_Y = 3
 LINE_B_Y = 12
 ROW_C_Y = 22
-
-# The 5x7 font has no umlauts, and MicroPython's str.upper() only handles
-# ASCII, so both cases are mapped explicitly.
-TRANSLIT = {
-    "ä": "AE", "Ä": "AE", "ö": "OE", "Ö": "OE", "ü": "UE", "Ü": "UE",
-    "ß": "SS", "é": "E", "É": "E", "è": "E", "È": "E",
-}
-DRAWABLE = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,-:/%"
 
 # The event name has about 50 pixels, so long DWD names are shortened by the
 # first matching keyword. Order matters: the more specific keyword comes first.
@@ -57,19 +50,6 @@ EVENT_SHORT = (
     ("TAUWETTER", "TAUWETTER"),
     ("UV", "UV-INDEX"),
 )
-
-
-def plain(text):
-    """Upper case, transliterated, reduced to characters the font can draw."""
-    out = ""
-    for char in str(text):
-        mapped = TRANSLIT.get(char)
-        if mapped is None:
-            mapped = char.upper()
-        for part in mapped:
-            if part in DRAWABLE:
-                out += part
-    return out.strip()
 
 
 def event_label(name):

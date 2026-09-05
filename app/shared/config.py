@@ -66,6 +66,10 @@ OPTIONS = (
     Option("PEGEL_WATER_COLOR", "color", "Water", group="River level"),
     Option("PEGEL_SURFACE_COLOR", "color", "Wave crest", group="River level"),
 
+    Option("FUEL_PRICE_COLOR", "color", "Price", group="Fuel prices"),
+    Option("FUEL_NAME_COLOR", "color", "Station name", group="Fuel prices"),
+    Option("FUEL_SCROLL_MS", "int", "Marquee step (ms)", 20, 500, group="Fuel prices"),
+
     Option("DWD_ALWAYS_SHOW", "bool", "Show without a warning", group="Weather warning"),
     Option("DWD_BLINK_LEVEL", "int", "Triangle blinks from level", 1, 4, group="Weather warning"),
 

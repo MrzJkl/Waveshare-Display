@@ -4,7 +4,8 @@ Drives a **Waveshare RGB full-colour LED matrix panel** (RGB-Matrix-Pxx series,
 64x32 pixels, HUB75) from a **Raspberry Pi Pico 2 W** over WiFi. The board pulls
 its values from **Home Assistant** over MQTT and shows them on the panel as a
 rotating set of widgets: a clock, the current weather, the next bus departures,
-the Rhine water level and German weather warnings.
+the Rhine water level, German weather warnings and the cheapest fuel price
+nearby.
 
 The panel is refreshed by a small C module using PIO and DMA, so the image is
 rock steady and never flickers. Everything above that, all widgets and all data
@@ -55,6 +56,7 @@ top of it.
 | `dwd` | German weather warning level, only while one is active | two DWD warning sensors |
 | `bus` | next departures with line, minutes and delay | departure sensors with a `times` attribute |
 | `pegel` | river level as an animated water surface with flood marks | a water level sensor in cm |
+| `fuel` | cheapest station's price, large, with the name as a marquee | Tankerkoenig price sensors |
 
 Widgets rotate every few seconds with a soft fade. A widget can hide itself
 when it has nothing to say, which is why the warning level only shows up while

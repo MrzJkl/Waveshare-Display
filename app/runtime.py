@@ -5,6 +5,11 @@ every widget's service(), then draws when the current widget asks for it or
 its data changed. The panel refreshes itself in hardware, so the loop sleeps
 until the next such moment, at most LOOP_MAX_SLEEP_MS.
 
+Frame timing: a due frame is drawn at the very top of a pass, before the
+services run, so an animated widget lands on its deadline instead of after
+whatever the services happened to take. Deadlines are always measured from a
+fresh timestamp taken after drawing.
+
 Robustness for unattended operation:
   * a widget that raises is logged, marked failed and dropped from the
     rotation; the other widgets keep running
@@ -137,6 +142,9 @@ def _switch(display, widget, ctx, animate):
     level = display.brightness
     if fade:
         display.fade_to(0.0, duration)
+    # A widget change is the one moment where a pause does not show, so this is
+    # where the heap gets tidied up rather than in the middle of an animation.
+    gc.collect()
     wait = _draw(display, widget, ctx)
     if fade:
         display.fade_to(level, duration)
@@ -224,6 +232,13 @@ def _run(status_led):
         now = ticks_ms()
         if watchdog is not None:
             watchdog.feed()
+        power = settings.DISPLAY_ON
+
+        # Draw a due frame first, so its timing does not depend on the services.
+        drawn = False
+        if power and current is not None and ticks_diff(now, next_draw) >= 0:
+            next_draw = ticks_add(ticks_ms(), _draw(display, current, ctx))
+            drawn = True
 
         net.service(now)
         time_sync.service(net.connected)
@@ -239,7 +254,6 @@ def _run(status_led):
 
         # Display on/off (web UI and the /on, /off, /toggle webhooks) and
         # brightness changes; both can happen while the display runs.
-        power = settings.DISPLAY_ON
         if power != last_power:
             last_power = power
             fade_ms = settings.TRANSITION_MS or 300
@@ -272,11 +286,9 @@ def _run(status_led):
             wait = _switch(display, widget, ctx, current is not None)
             current = widget
             next_draw = ticks_add(ticks_ms(), wait)
-        elif (ticks_diff(now, next_draw) >= 0
-              or widget.revision != last_widget_revision
-              or time_sync.revision != last_time_revision):
-            wait = _draw(display, widget, ctx)
-            next_draw = ticks_add(now, wait)
+        elif not drawn and (widget.revision != last_widget_revision
+                            or time_sync.revision != last_time_revision):
+            next_draw = ticks_add(ticks_ms(), _draw(display, widget, ctx))
 
         last_widget_revision = widget.revision
         last_time_revision = time_sync.revision
