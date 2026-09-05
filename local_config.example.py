@@ -12,6 +12,3 @@ MQTT_HOST = "192.168.178.2"
 MQTT_PORT = 1883
 MQTT_USER = "display"
 MQTT_PASSWORD = "your-mqtt-password"
-
-# Feuer Software Connect API (vehicle status widget). Empty = widget disabled.
-FEUERSOFTWARE_TOKEN = ""

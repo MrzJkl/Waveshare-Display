@@ -1,7 +1,6 @@
 # from app.widgets.clock import ClockWidget
 from app.widgets.bus import BusWidget
 from app.widgets.clock.widget import ClockWidget
-from app.widgets.vehicles import VehiclesWidget
 from app.widgets.weather import WeatherWidget
 
 
@@ -11,5 +10,4 @@ def create_default_widgets():
         ClockWidget(),      # fertig, waehrend der Widget-Arbeit ausgeblendet
         WeatherWidget(),
         BusWidget(),
-        # VehiclesWidget(),
     ]

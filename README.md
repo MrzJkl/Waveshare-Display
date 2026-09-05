@@ -25,8 +25,6 @@ app/
     weather/widget.py
     weather/icons.py
     bus/widget.py
-    vehicles/widget.py
-    vehicles/client.py
 native/
   hub75_native_scan/
     README.md
@@ -58,14 +56,14 @@ README.md
 - [app/shared/timezone.py](app/shared/timezone.py): Zeitzonen mit lokal berechneter Sommerzeitregel (EU), z. B. `Europe/Berlin` = CET/CEST.
 - [app/shared/mqtt.py](app/shared/mqtt.py): gemeinsamer MQTT-Client (umqtt.simple) mit Reconnect, Keepalive-Watchdog und Wertespeicher; Widgets melden Topics an und lesen die letzten Werte.
 - [app/shared/hass.py](app/shared/hass.py): HomeAssistant-Schicht darueber: Entity-IDs zu Statestream-Topics, typisierter Zugriff (`state`, `state_float`, `attribute`).
-- [app/widgets](app/widgets): ein Ordner pro Widget: [clock](app/widgets/clock/widget.py) (taktische Uhr), [weather](app/widgets/weather/widget.py) (Wetter-Dashboard aus einer HomeAssistant-weather-Entity, Icons in [icons.py](app/widgets/weather/icons.py)), [bus](app/widgets/bus/widget.py) (Abfahrtstafel aus HomeAssistant-Abfahrtssensoren: Linie, Minuten, Verspaetung), [vehicles](app/widgets/vehicles/widget.py) (FMS-Funkstatus der Fahrzeuge aus der Feuer Software Connect API, HTTPS-Polling in [client.py](app/widgets/vehicles/client.py)). [base.py](app/widgets/base.py) beschreibt den Lebenszyklus, [widgets/__init__.py](app/widgets/__init__.py) die Rotation.
+- [app/widgets](app/widgets): ein Ordner pro Widget: [clock](app/widgets/clock/widget.py) (taktische Uhr), [weather](app/widgets/weather/widget.py) (Wetter-Dashboard aus einer HomeAssistant-weather-Entity, Icons in [icons.py](app/widgets/weather/icons.py)), [bus](app/widgets/bus/widget.py) (Abfahrtstafel aus HomeAssistant-Abfahrtssensoren: Linie, Minuten, Verspaetung). [base.py](app/widgets/base.py) beschreibt den Lebenszyklus, [widgets/__init__.py](app/widgets/__init__.py) die Rotation.
 - [app/runtime.py](app/runtime.py): Hauptschleife: Dienste, `service()` aller Widgets, Rotation mit Fade, Zeichnen genau dann, wenn das Widget es will oder seine Daten sich aendern.
 - [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul, das das Panel komplett in Hardware (PIO + DMA) refresht. Aufbau und Funktionsweise sind in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md) erklaert.
 - [manifest.py](manifest.py): Frozen-Manifest fuer den Build.
 - [tools/generate_local_config.sh](tools/generate_local_config.sh): erzeugt `local_config.py` (WLAN- und MQTT-Zugangsdaten, gitignored) aus Env-Variablen und kopiert sie mit `--deploy` auf das Geraet.
 - [tools/run_demo.sh](tools/run_demo.sh): spielt eine visuelle Testsequenz ab (`brightness` oder `color`, laeuft per `mpremote run`, nichts wird geflasht) und startet danach `main.py` neu.
 - [tools/brightness_demo.py](tools/brightness_demo.py), [tools/color_demo.py](tools/color_demo.py): die Testsequenzen fuer Helligkeit/Fading bzw. Farben/Pixelzuordnung.
-- [local_config.example.py](local_config.example.py): Vorlage dafuer (WLAN, MQTT, Feuer-Software-Token).
+- [local_config.example.py](local_config.example.py): Vorlage dafuer.
 
 ## Architektur
 
@@ -154,9 +152,6 @@ Die Herleitung der Werte und eine Symptom-Tabelle stehen in [native/hub75_native
 | `BUS_ENTITIES`, `BUS_ROWS` | 6 Linien, 4 Zeilen | Abfahrtssensoren (eine Entity pro Linie und Richtung) und Zeilenzahl (3 oder 4) |
 | `BUS_LINE_COLORS`, `BUS_LINE_COLOR` | 606/607 gruen, 608/609 orange, Nachtlinien weiss | Farbe der Liniennummer wie auf den echten Anzeigen; `(1, 3)` ist ein Rot/Gelb-Schachbrett, das orange wirkt |
 | `BUS_MINUTES_COLOR`, `BUS_DELAY_RED_MIN` | weiss, 5 | Farbe der Minuten; ab so vielen Minuten Verspaetung rot statt gelb |
-| `VEHICLES_API_URL`, `VEHICLES_POLL_MS` | Connect API, 30 s | Fahrzeugliste per HTTPS pollen (Token `FEUERSOFTWARE_TOKEN` in `local_config.py`) |
-| `VEHICLES_SHOW`, `VEHICLES_ROWS`, `VEHICLES_SHOW_LOCATION` | 6 Fahrzeuge, 3 Zeilen, aus | Auswahl und Reihenfolge der Fahrzeuge (spaltenweise), Zeilen pro Spalte, Standortnummer im Namen anzeigen |
-| `VEHICLE_STATUS_COLORS`, `VEHICLES_STALE_MS` | FMS-Farben, 5 min | Farbe je Status; danach Status weiss als Hinweis auf veraltete Daten |
 
 ## Schnellstart
 

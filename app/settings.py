@@ -82,30 +82,6 @@ BUS_LINE_COLOR = 7             # weiss, fuer Linien ohne Eintrag in BUS_LINE_COL
 BUS_MINUTES_COLOR = 7          # weiss
 BUS_DELAY_RED_MIN = 5          # ab so vielen Minuten Verspaetung rot statt gelb
 
-# Fahrzeugstatus-Widget: Feuer Software Connect API, HTTPS-Polling (blockiert kurz pro Abfrage)
-VEHICLES_API_URL = "https://connectapi.feuersoftware.com/interfaces/public/vehicle"
-VEHICLES_POLL_MS = 30000
-VEHICLES_HTTP_TIMEOUT_S = 8
-VEHICLES_STALE_MS = 5 * 60 * 1000    # ohne erfolgreiche Abfrage so lange: Status weiss statt farbig
-VEHICLES_ROWS = 3                    # Zeilen pro Spalte (zwei Spalten): 3 = luftig, 4 = kompakt
-VEHICLES_SHOW_LOCATION = False       # False: "24-1" statt "1-24-1" anzeigen (Standortnummer weglassen)
-# Kurznamen (letztes Wort des CallSign) in Anzeigereihenfolge, spaltenweise; leer = alle sortiert
-VEHICLES_SHOW = ("1-11-1", "1-46-1", "1-46-2", "1-24-1", "1-30-1", "1-52-1")
-VEHICLES_NAME_COLOR = 7              # weiss
-# FMS-Status -> Farbe; (Farbe, 0) = halbe Punktdichte fuer dunkle Toene
-VEHICLE_STATUS_COLORS = {
-    0: 1,          # Notruf: rot, blinkt
-    1: 2,          # hellgruen
-    2: (2, 0),     # dunkelgruen
-    3: 3,          # gelb
-    4: 1,          # rot
-    5: 4,          # blau
-    6: (7, 0),     # grau
-    7: (1, 3),     # orange
-    8: 5,          # magenta
-    9: 6,          # cyan
-}
-
 # Uhr-Widget
 CLOCK_TIME_COLOR = 7           # weiss
 CLOCK_DATE_COLOR = 1           # rot (gelb, wenn der letzte Zeitabgleich aelter als TIME_STALE_MS ist)
@@ -130,4 +106,3 @@ MQTT_HOST = getattr(_local, "MQTT_HOST", "")       # leer = MQTT aus
 MQTT_PORT = getattr(_local, "MQTT_PORT", 1883)
 MQTT_USER = getattr(_local, "MQTT_USER", "")
 MQTT_PASSWORD = getattr(_local, "MQTT_PASSWORD", "")
-FEUERSOFTWARE_TOKEN = getattr(_local, "FEUERSOFTWARE_TOKEN", "")   # leer = Fahrzeug-Widget aus
