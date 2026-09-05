@@ -24,9 +24,11 @@ class Option:
 
     kind      int, float, bool, color, choice, text or widgets
     live      True: takes effect with the next frame, False: needs a restart
+    form      False: not part of the settings form (it has its own control, and
+              a partial POST must not be able to change it by omission)
     """
 
-    def __init__(self, key, kind, label, low=None, high=None, choices=None, live=True, group=""):
+    def __init__(self, key, kind, label, low=None, high=None, choices=None, live=True, group="", form=True):
         self.key = key
         self.kind = kind
         self.label = label
@@ -35,10 +37,12 @@ class Option:
         self.choices = choices
         self.live = live
         self.group = group
+        self.form = form
 
 
 OPTIONS = (
-    Option("DISPLAY_ON", "bool", "Display an", group="Anzeige"),
+    # Switched with the buttons and the /on, /off, /toggle webhooks, not in the form.
+    Option("DISPLAY_ON", "bool", "Display an", group="Anzeige", form=False),
     Option("BRIGHTNESS", "float", "Helligkeit (0.0 - 1.0)", 0.0, 1.0, group="Anzeige"),
     Option("WIDGETS_ENABLED", "widgets", "Aktive Widgets", group="Anzeige"),
     Option("WIDGET_ROTATE_MS", "int", "Wechsel alle (ms, 0 = kein Wechsel)", 0, 3600000, group="Anzeige"),
@@ -66,6 +70,7 @@ OPTIONS = (
     Option("DWD_BLINK_LEVEL", "int", "Dreieck blinkt ab Stufe", 1, 4, group="DWD-Warnung"),
 
     Option("TIMEZONE", "choice", "Zeitzone", choices=("Europe/Berlin", "Europe/London", "Europe/Helsinki", "UTC"), live=False, group="System"),
+    Option("WATCHDOG_MS", "int", "Watchdog (ms, 0 = aus)", 0, 8300, live=False, group="System"),
 )
 
 BY_KEY = {option.key: option for option in OPTIONS}
@@ -178,18 +183,19 @@ def update(raw, widget_names=()):
             clean = coerce(option, value, widget_names)
         except (TypeError, ValueError):
             continue
-        was_stored = key in stored
-        if same(getattr(settings, key, None), clean) and not was_stored:
+        # A value equal to the firmware default belongs in neither the file nor
+        # a change report; anything else is stored.
+        should_store = not (key in DEFAULTS and same(DEFAULTS[key], clean))
+        setting_differs = not same(getattr(settings, key, None), clean)
+        file_differs = (key in stored) != should_store or (should_store and not same(stored.get(key), clean))
+        if not setting_differs and not file_differs:
             continue
+
         setattr(settings, key, clean)
-        if key in DEFAULTS and same(DEFAULTS[key], clean):
-            stored.pop(key, None)           # back to the firmware default
-            if not was_stored:
-                continue
-        else:
-            if was_stored and same(stored[key], clean):
-                continue
+        if should_store:
             stored[key] = clean
+        else:
+            stored.pop(key, None)
         changed.append(key)
         if not option.live:
             restart.append(key)

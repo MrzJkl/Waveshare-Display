@@ -37,15 +37,6 @@ class HomeAssistant:
         self.mqtt.watch(self.attribute_topic(entity_id, attribute))
 
     # --- values -------------------------------------------------------------
-    @property
-    def connected(self):
-        return self.mqtt.connected
-
-    @property
-    def revision(self):
-        """Increases with every received message (for cheap change detection)."""
-        return self.mqtt.revision
-
     def state(self, entity_id, default=None):
         """Raw state string, or default when unknown/unavailable/not yet received."""
         value = self.mqtt.get(self.state_topic(entity_id))

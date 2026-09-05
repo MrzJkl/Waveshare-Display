@@ -42,6 +42,11 @@ NATIVE_ADDR_NS = 200           # Settle nach Zeilenadresswechsel vor OE (BASE_AD
 # Hauptschleife: das Panel refresht sich selbst, der Loop schlaeft bis zum
 # naechsten Zeichenzeitpunkt, hoechstens LOOP_MAX_SLEEP_MS.
 LOOP_MAX_SLEEP_MS = 50
+# Hardware-Watchdog: startet das Board neu, wenn die Hauptschleife haengt.
+# 0 = aus, sonst 1000..8300 ms (Obergrenze des RP2350). Fuer den Dauerbetrieb
+# sind 8000 empfohlen. Achtung beim Entwickeln: eingeschaltet startet das Board
+# auch neu, wenn main.py per mpremote unterbrochen wird (auch tools/run_demo.sh).
+WATCHDOG_MS = 0
 WIDGET_ROTATE_MS = 15000       # Widget-Wechsel; 0 = nur das erste Widget zeigen
 TRANSITION_MS = 400            # Aus-/Einblenden beim Widget-Wechsel; 0 = hart
 # Widgets in der Rotation (Namen aus app/widgets); leer = alle. Ein Widget kann
@@ -131,7 +136,7 @@ MQTT_CLIENT_ID = "led-display"
 MQTT_KEEPALIVE_S = 60
 MQTT_RECONNECT_MS = 5000       # erster Wiederverbindungsversuch, verdoppelt sich bis MQTT_RECONNECT_MAX_MS
 MQTT_RECONNECT_MAX_MS = 60000
-MQTT_CONNECT_TIMEOUT_S = 5
+MQTT_CONNECT_TIMEOUT_S = 3     # begrenzt, wie lange ein Verbindungsversuch die Schleife blockiert
 HASS_BASE_TOPIC = "statestream"  # base_topic von mqtt_statestream in HomeAssistant
 
 # Zugangsdaten kommen aus local_config.py auf dem Geraete-Dateisystem (nicht in der Firmware).

@@ -22,11 +22,13 @@ never shown. Set WEB_ENABLED = False to switch the server off.
 import json
 import select
 import socket
+import time
 
 from app import settings
 from app.shared import config
 
-REQUEST_TIMEOUT_S = 2
+REQUEST_TIMEOUT_S = 1          # bounds how long one request can stall the main loop
+LISTEN_RETRY_MS = 5000         # after a failed bind (e.g. port still in use)
 MAX_BODY = 4096
 REASONS = {"200": "OK", "303": "See Other", "404": "Not Found"}
 
@@ -97,6 +99,7 @@ class WebServer:
         self.url = None
         self._socket = None
         self._poller = None
+        self._next_listen = 0
         self._notice = ""
 
     # ------------------------------------------------------------------
@@ -104,8 +107,8 @@ class WebServer:
         if not settings.WEB_ENABLED:
             return
         if self._socket is None:
-            if ctx.net.connected:
-                self._listen(ctx)
+            if ctx.net.connected and time.ticks_diff(now_ticks, self._next_listen) >= 0:
+                self._listen(ctx, now_ticks)
             return
         if not ctx.net.connected:
             self._close()
@@ -113,7 +116,8 @@ class WebServer:
         if self._poller.poll(0):
             self._handle()
 
-    def _listen(self, ctx):
+    def _listen(self, ctx, now_ticks):
+        self._next_listen = time.ticks_add(now_ticks, LISTEN_RETRY_MS)
         try:
             sock = socket.socket()
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -223,8 +227,9 @@ class WebServer:
 
     def _save(self, values):
         # An unchecked checkbox sends nothing, so absent booleans mean False.
+        # Options outside the form (the power state) are never touched here.
         for option in config.OPTIONS:
-            if option.kind == "bool" and option.key not in values:
+            if option.form and option.kind == "bool" and option.key not in values:
                 values[option.key] = False
         if "WIDGETS_ENABLED" not in values:
             values["WIDGETS_ENABLED"] = []
@@ -278,6 +283,8 @@ class WebServer:
         write("<form method=post>")
         group = None
         for option in config.OPTIONS:
+            if not option.form:
+                continue
             if option.group != group:
                 if group is not None:
                     write("</table>")

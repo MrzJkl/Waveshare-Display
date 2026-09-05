@@ -187,6 +187,7 @@ Die Herleitung der Werte und eine Symptom-Tabelle stehen in [native/hub75_native
 | `DWD_BLINK_LEVEL`, `DWD_LEVEL_COLORS` | 3, 1 gelb / 2 orange / 3 rot / 4 magenta | ab dieser Stufe blinkt das Dreieck; Farbe je Stufe (Panel hat kein Orange, `(1, 3)` ist ein Rot/Gelb-Schachbrett) |
 | `WIDGETS_ENABLED` | alle | Widgets in der Rotation; leere Liste = alle (so kann die Weboberflaeche das Panel nicht leer schalten) |
 | `WEB_ENABLED`, `WEB_PORT` | an, 80 | Webserver fuer die Konfiguration im Betrieb |
+| `WATCHDOG_MS` | 0 (aus) | Hardware-Watchdog fuer den Dauerbetrieb, siehe unten |
 
 ## Schnellstart
 
@@ -245,6 +246,16 @@ Die Skripte schreiben zu jedem Test auf die Konsole, was auf dem Panel zu sehen 
 Wert nach `BRIGHTNESS_GAMMA` in `settings.py` uebernehmen.
 
 Hinweis: `local_config.py` ist absichtlich nicht versioniert und liegt nur lokal und auf dem Geraet.
+
+### Dauerbetrieb
+
+- **Fehler in einem Widget** (kaputte Daten, Bug) nehmen nur dieses Widget aus der Rotation; die
+  Meldung steht auf der Konsole und die Weboberflaeche zeigt sie unter "Widget-Fehler".
+- **Fehler ausserhalb der Widgets** blinken den Fehlercode auf der Status-LED und starten dann neu,
+  statt mit stehendem Bild haengen zu bleiben.
+- **Watchdog:** `WATCHDOG_MS = 8000` (auch ueber die Weboberflaeche, Neustart noetig) startet das Board
+  neu, falls die Hauptschleife haengt. Zum Entwickeln auf `0` lassen: eingeschaltet startet das Board
+  auch dann neu, wenn `main.py` per `mpremote` unterbrochen wird, also auch bei `tools/run_demo.sh`.
 
 ### HomeAssistant vorbereiten
 

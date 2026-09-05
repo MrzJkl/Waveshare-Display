@@ -20,13 +20,20 @@ class Widget:
                                returns the time to the next second boundary).
                                The runtime redraws earlier when revision or the
                                time sync changed.
-    ctx gives access to ctx.net (WifiService) and ctx.time (TimeSync).
+
+    ctx carries the shared services: ctx.net (WifiService), ctx.time (TimeSync),
+    ctx.mqtt (MqttClient) and ctx.hass (HomeAssistant).
+
+    Exceptions from these three methods do not take the display down: the
+    runtime logs them, sets self.failed and leaves the widget out of the
+    rotation until the next restart.
     """
 
     name = "widget"
 
     def __init__(self):
         self.revision = 0
+        self.failed = False
 
     def service(self, now_ticks, ctx):
         pass

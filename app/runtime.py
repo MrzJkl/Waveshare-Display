@@ -1,9 +1,15 @@
-"""Main loop: services (WLAN, time sync, data), widget rotation and drawing.
+"""Main loop: services, widget rotation, drawing and the on/off state.
 
-The panel refreshes itself in hardware, so this loop only has to draw a new
-frame when the current widget asks for it or its data changed. It sleeps
-until the next such moment, at most LOOP_MAX_SLEEP_MS, so the non-blocking
-services get their turn regularly.
+Every pass runs the shared services (WLAN, time sync, MQTT, web server) and
+every widget's service(), then draws when the current widget asks for it or
+its data changed. The panel refreshes itself in hardware, so the loop sleeps
+until the next such moment, at most LOOP_MAX_SLEEP_MS.
+
+Robustness for unattended operation:
+  * a widget that raises is logged, marked failed and dropped from the
+    rotation; the other widgets keep running
+  * an error outside the widgets blinks the status LED and reboots
+  * with settings.WATCHDOG_MS the hardware watchdog reboots on a hang
 """
 
 import gc
@@ -50,10 +56,16 @@ class Rotator:
 
     @staticmethod
     def visible(widget, ctx):
+        if widget.failed:
+            return False
         enabled = settings.WIDGETS_ENABLED
         if enabled and widget.name not in enabled:
             return False
-        return widget.is_ready(ctx)
+        try:
+            return widget.is_ready(ctx)
+        except Exception as exc:
+            _widget_failed(widget, "is_ready", exc)
+            return False
 
     def current(self, ctx):
         widget = self.widgets[self.index]
@@ -62,7 +74,12 @@ class Rotator:
         for candidate in self.widgets:
             if self.visible(candidate, ctx):
                 return candidate
-        return self.widgets[0]      # last resort: never leave the panel empty
+        # Nothing is ready: never leave the panel empty, but prefer a widget
+        # that at least is not broken.
+        for candidate in self.widgets:
+            if not candidate.failed:
+                return candidate
+        return self.widgets[0]
 
     def service(self, now_ticks, ctx):
         rotate_ms = settings.WIDGET_ROTATE_MS
@@ -88,13 +105,27 @@ def _led_blink(status_led, count, on_ms=90, off_ms=90, tail_ms=800):
         time.sleep_ms(tail_ms)
 
 
-def _fatal_loop(status_led, code=5):
-    while True:
+def _fatal_reboot(status_led, code=5):
+    """Signal the error on the LED long enough to be noticed, then restart."""
+    for _ in range(5):
         _led_blink(status_led, code)
+    print("rebooting after a fatal error")
+    machine.reset()
+
+
+def _widget_failed(widget, where, exc):
+    """Drop a broken widget instead of taking the whole display down."""
+    if not widget.failed:
+        print("widget %s failed in %s: %s" % (widget.name, where, exc))
+    widget.failed = True
 
 
 def _draw(display, widget, ctx):
-    wait = widget.draw(display, ctx)
+    try:
+        wait = widget.draw(display, ctx)
+    except Exception as exc:
+        _widget_failed(widget, "draw", exc)
+        return 1000            # the next pass picks a widget that still works
     display.show()
     return 1000 if wait is None else max(1, wait)
 
@@ -159,12 +190,21 @@ def _run(status_led):
             ("Zeit", "%s %s" % (now_state["time"], now_state["zone"]) if now_state["time"] else "nicht synchron"),
             ("MQTT", "verbunden" if now_state["mqtt"] else "getrennt"),
             ("Widget", now_state["widget"]),
+            ("Widget-Fehler", ", ".join(w.name for w in widgets if w.failed) or "keine"),
             ("Helligkeit aktiv", "%.2f" % now_state["brightness"]),
             ("Bildrate", "%d Hz" % now_state["frame_hz"]),
             ("Freier Speicher", "%d KB" % (now_state["mem_free"] // 1024)),
         )
 
     web = WebServer([widget.name for widget in widgets], status, state)
+
+    watchdog = None
+    if settings.WATCHDOG_MS:
+        try:
+            watchdog = machine.WDT(timeout=settings.WATCHDOG_MS)
+            print("watchdog: %d ms" % settings.WATCHDOG_MS)
+        except (ValueError, OSError) as exc:
+            print("watchdog unavailable:", exc)
 
     ticks_ms = time.ticks_ms
     ticks_diff = time.ticks_diff
@@ -182,13 +222,20 @@ def _run(status_led):
 
     while True:
         now = ticks_ms()
+        if watchdog is not None:
+            watchdog.feed()
 
         net.service(now)
         time_sync.service(net.connected)
         mqtt.service(now, net.connected)
         web.service(now, ctx)
         for w in widgets:
-            w.service(now, ctx)
+            if w.failed:
+                continue
+            try:
+                w.service(now, ctx)
+            except Exception as exc:
+                _widget_failed(w, "service", exc)
 
         # Display on/off (web UI and the /on, /off, /toggle webhooks) and
         # brightness changes; both can happen while the display runs.
@@ -247,4 +294,4 @@ def run():
         _run(status_led)
     except Exception as exc:
         print("fatal:", exc)
-        _fatal_loop(status_led, code=5)
+        _fatal_reboot(status_led, code=5)
