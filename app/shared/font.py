@@ -140,7 +140,7 @@ class Font:
 
     def draw_glyph(self, fb, key, x, y, colour, scale=1):
         """Draw one glyph by dictionary key with transparent background
-        (keys may be whole words, e.g. icon names)."""
+        (keys may be whole words, e.g. icon names). colour 0 draws black."""
         self._blit(fb, key, x, y, colour, None, scale, False)
         return x + self.glyph_width(key, scale)
 
@@ -149,7 +149,14 @@ class Font:
         if isinstance(colour, tuple):
             colour, second = colour
         if background is None:
-            fb.blit(self._glyph(ch, scale, False, bold), x, y, 0, self._palette(colour, 0))
+            # blit compares the palette-mapped colour against `key` and skips
+            # matches. Unset pixels map to 0, so key=0 makes them transparent;
+            # for black text that would swallow the glyph as well, hence the
+            # inverted palette: unset -> 7 (== key, skipped), set -> 0 (drawn).
+            if colour == 0:
+                fb.blit(self._glyph(ch, scale, False, bold), x, y, 7, self._palette(0, 7))
+            else:
+                fb.blit(self._glyph(ch, scale, False, bold), x, y, 0, self._palette(colour, 0))
         else:
             fb.blit(self._glyph(ch, scale, False, bold), x, y, -1, self._palette(colour, background))
         if second is not None:
@@ -160,9 +167,8 @@ class Font:
 
         colour may be a (a, b) pair for a dithered mixed colour; bold thickens
         the strokes by one pixel.
-        background=None leaves the pixels around the glyph strokes untouched
-        (blit skips source 0, which the palette maps to 0; black text on a
-        transparent background is therefore not possible).
+        background=None leaves the pixels around the glyph strokes untouched;
+        black text on a transparent background works too (see _blit).
         """
         spacing = self.spacing * scale
         for ch in text:

@@ -82,6 +82,22 @@ BUS_LINE_COLOR = 7             # weiss, fuer Linien ohne Eintrag in BUS_LINE_COL
 BUS_MINUTES_COLOR = 7          # weiss
 BUS_DELAY_RED_MIN = 5          # ab so vielen Minuten Verspaetung rot statt gelb
 
+# Pegel-Widget: Wasserstand aus HomeAssistant (cm), animierte Wasserflaeche
+PEGEL_ENTITY = "sensor.rhein_pegel_bonn_wasserstand"
+PEGEL_MIN_CM = 0               # unteres Ende der Skala (kein Wasser im Bild)
+PEGEL_MAX_CM = 800             # oberes Ende (Bild voll); so liegen beide Marken auf der Skala
+# Gestrichelte Marken (cm, Farbe) und Farbwechsel der Zahl. Die Hochwassermarken
+# fuer den Pegel Bonn bitte pruefen und hier eintragen (Quelle: PEGELONLINE / HochwasserPortal).
+PEGEL_MARKS = ((620, 3), (750, 1))
+PEGEL_WARN_CM = 620            # ab hier Zahl gelb
+PEGEL_ALARM_CM = 750           # ab hier Zahl rot und blinkend
+PEGEL_TREND_WINDOW_MS = 3 * 60 * 60 * 1000   # Zeitfenster fuer den Trendpfeil
+PEGEL_TREND_MIN_CM = 2         # ab dieser Aenderung gilt der Pegel als steigend/fallend
+PEGEL_WAVE_MS = 160            # Schrittweite der Wellenanimation
+PEGEL_WATER_COLOR = 4          # blau
+PEGEL_SURFACE_COLOR = 6        # cyan
+PEGEL_NUMBER_COLOR = 7         # weiss
+
 # Uhr-Widget
 CLOCK_TIME_COLOR = 7           # weiss
 CLOCK_DATE_COLOR = 1           # rot (gelb, wenn der letzte Zeitabgleich aelter als TIME_STALE_MS ist)
