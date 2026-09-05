@@ -1,5 +1,7 @@
-# Frozen modules: board defaults, the app package (recursively) and the local WLAN config.
+# Frozen modules: board defaults, MQTT client library and the app package (recursively).
+# local_config.py (WLAN and MQTT credentials) is NOT frozen: it lives on the device
+# filesystem and is deployed with `mpremote cp local_config.py :local_config.py`.
 include("$(PORT_DIR)/boards/manifest.py")
+require("umqtt.simple")
 module("main.py", base_path=".", opt=0)
 package("app", base_path=".", opt=0)
-module("wifi_config.py", base_path=".", opt=0)

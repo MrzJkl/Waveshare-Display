@@ -14,6 +14,8 @@ from machine import Pin
 from app import settings
 from app.shared import timezone
 from app.shared.display import Hub75Display
+from app.shared.hass import HomeAssistant
+from app.shared.mqtt import MqttClient
 from app.shared.timesync import TimeSync
 from app.shared.wifi import WifiService
 from app.widgets import create_default_widgets
@@ -22,9 +24,11 @@ from app.widgets import create_default_widgets
 class Context:
     """What widgets get to look at."""
 
-    def __init__(self, net, time_sync):
+    def __init__(self, net, time_sync, mqtt, hass):
         self.net = net          # WifiService: connected
         self.time = time_sync   # TimeSync: now_ms(), zone, health(), synced
+        self.mqtt = mqtt        # MqttClient: watch(), get(), connected
+        self.hass = hass        # HomeAssistant: state(), attribute(), watch_state()
 
 
 class Rotator:
@@ -101,7 +105,9 @@ def _run(status_led):
     display = Hub75Display()
     net = WifiService(status_led)
     time_sync = TimeSync(timezone.get_zone(settings.TIMEZONE))
-    ctx = Context(net, time_sync)
+    mqtt = MqttClient()
+    hass = HomeAssistant(mqtt, settings.HASS_BASE_TOPIC)
+    ctx = Context(net, time_sync, mqtt, hass)
     widgets = create_default_widgets()
     rotator = Rotator(widgets, settings.WIDGET_ROTATE_MS)
 
@@ -122,6 +128,7 @@ def _run(status_led):
 
         net.service(now)
         time_sync.service(net.connected)
+        mqtt.service(now, net.connected)
         for w in widgets:
             w.service(now, ctx)
 

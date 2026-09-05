@@ -17,11 +17,13 @@ app/
     wifi.py
     timezone.py
     timesync.py
+    mqtt.py
+    hass.py
   widgets/
     base.py
     clock/widget.py
-    temperature/widget.py
-    homeassistant/widget.py
+    weather/widget.py
+    weather/icons.py
 native/
   hub75_native_scan/
     README.md
@@ -34,11 +36,11 @@ native/
     mod_hub75_native_scan.c
     micropython.cmake
 tools/
-  generate_wifi_config.sh
+  generate_local_config.sh
   run_demo.sh
   brightness_demo.py
   color_demo.py
-wifi_config.example.py
+local_config.example.py
 README.md
 .gitignore
 ```
@@ -51,14 +53,16 @@ README.md
 - [app/shared/wifi.py](app/shared/wifi.py): WLAN-Verbindung und Status-LED.
 - [app/shared/timesync.py](app/shared/timesync.py): Zeitquelle: nicht blockierender SNTP-Client mit Laufzeitkompensation, Plausibilitaetspruefung und Server-Fallback; laeuft zwischen den Syncs auf dem Millisekunden-Ticker.
 - [app/shared/timezone.py](app/shared/timezone.py): Zeitzonen mit lokal berechneter Sommerzeitregel (EU), z. B. `Europe/Berlin` = CET/CEST.
-- [app/widgets](app/widgets): ein Ordner pro Widget mit Darstellung und (spaeter) eigenem Datenclient: [clock](app/widgets/clock/widget.py) (taktische Uhr), Temperatur und HomeAssistant als Platzhalter. [base.py](app/widgets/base.py) beschreibt den Lebenszyklus.
+- [app/shared/mqtt.py](app/shared/mqtt.py): gemeinsamer MQTT-Client (umqtt.simple) mit Reconnect, Keepalive-Watchdog und Wertespeicher; Widgets melden Topics an und lesen die letzten Werte.
+- [app/shared/hass.py](app/shared/hass.py): HomeAssistant-Schicht darueber: Entity-IDs zu Statestream-Topics, typisierter Zugriff (`state`, `state_float`, `attribute`).
+- [app/widgets](app/widgets): ein Ordner pro Widget: [clock](app/widgets/clock/widget.py) (taktische Uhr), [weather](app/widgets/weather/widget.py) (Wetter-Dashboard aus einer HomeAssistant-weather-Entity, Icons in [icons.py](app/widgets/weather/icons.py)). [base.py](app/widgets/base.py) beschreibt den Lebenszyklus, [widgets/__init__.py](app/widgets/__init__.py) die Rotation.
 - [app/runtime.py](app/runtime.py): Hauptschleife: Dienste, `service()` aller Widgets, Rotation mit Fade, Zeichnen genau dann, wenn das Widget es will oder seine Daten sich aendern.
 - [native/hub75_native_scan](native/hub75_native_scan): User-C-Modul, das das Panel komplett in Hardware (PIO + DMA) refresht. Aufbau und Funktionsweise sind in [native/hub75_native_scan/README.md](native/hub75_native_scan/README.md) erklaert.
 - [manifest.py](manifest.py): Frozen-Manifest fuer den Build.
-- [tools/generate_wifi_config.sh](tools/generate_wifi_config.sh): erzeugt lokale [wifi_config.py](wifi_config.py) aus Env-Variablen.
+- [tools/generate_local_config.sh](tools/generate_local_config.sh): erzeugt `local_config.py` (WLAN- und MQTT-Zugangsdaten, gitignored) aus Env-Variablen und kopiert sie mit `--deploy` auf das Geraet.
 - [tools/run_demo.sh](tools/run_demo.sh): spielt eine visuelle Testsequenz ab (`brightness` oder `color`, laeuft per `mpremote run`, nichts wird geflasht) und startet danach `main.py` neu.
 - [tools/brightness_demo.py](tools/brightness_demo.py), [tools/color_demo.py](tools/color_demo.py): die Testsequenzen fuer Helligkeit/Fading bzw. Farben/Pixelzuordnung.
-- [wifi_config.example.py](wifi_config.example.py): Vorlage fuer lokale WLAN-Konfiguration.
+- [local_config.example.py](local_config.example.py): Vorlage dafuer.
 
 ## Architektur
 
@@ -87,7 +91,12 @@ README.md
   Schleifendurchlauf gerufen (Daten holen, nicht blockieren, `self.revision` erhoehen, wenn sich etwas
   geaendert hat). `draw(display, ctx)` zeichnet einen kompletten Frame auf `display.fb` und gibt zurueck,
   in wie vielen Millisekunden es wieder gezeichnet werden will (die Uhr: bis zur naechsten
-  Sekundengrenze). `ctx` liefert Netz (`ctx.net`) und Zeit (`ctx.time`).
+  Sekundengrenze). `ctx` liefert Netz (`ctx.net`), Zeit (`ctx.time`), MQTT (`ctx.mqtt`) und
+  HomeAssistant (`ctx.hass`).
+- **HomeAssistant:** Daten kommen per MQTT von HomeAssistants `mqtt_statestream` (retained Topics
+  `<base>/<domain>/<object_id>/state` und je Attribut ein Topic). Widgets melden in `service()` die
+  Entitaeten an, die sie brauchen (`ctx.hass.watch_state(...)`), der Broker liefert nur diese; gelesen
+  wird mit `ctx.hass.state_float(...)` usw. Verbindungsabbrueche behandelt der Client selbst.
 - **Runtime:** ruft die Dienste auf, rotiert Widgets alle `WIDGET_ROTATE_MS` mit Aus-/Einblenden
   (`TRANSITION_MS`) und schlaeft sonst bis zum naechsten Zeichenzeitpunkt.
 
@@ -141,11 +150,13 @@ Die Herleitung der Werte und eine Symptom-Tabelle stehen in [native/hub75_native
 
 ## Schnellstart
 
-1. WLAN-Config generieren:
+1. Lokale Konfiguration (WLAN und MQTT) erzeugen und auf das Geraet kopieren. Sie wird nicht in die
+   Firmware eingefroren, Passwortwechsel brauchen also keinen Neubau:
 
 ```bash
-cd tools
-WIFI_SSID='dein-ssid' WIFI_PASSWORD='dein-passwort' ./generate_wifi_config.sh
+WIFI_SSID='dein-ssid' WIFI_PASSWORD='dein-passwort' \
+MQTT_HOST='192.168.178.2' MQTT_USER='display' MQTT_PASSWORD='geheim' \
+./tools/generate_local_config.sh --deploy
 ```
 
 2. MicroPython RP2 Firmware mit Frozen Manifest und nativem Modul bauen (im separaten MicroPython-Checkout):
@@ -190,7 +201,22 @@ Die Skripte schreiben zu jedem Test auf die Konsole, was auf dem Panel zu sehen 
 `brightness` die unteren Stufen zu dunkel oder zu hell, `GAMMA` im Skript aendern und den passenden
 Wert nach `BRIGHTNESS_GAMMA` in `settings.py` uebernehmen.
 
-Hinweis: `wifi_config.py` ist absichtlich nicht versioniert.
+Hinweis: `local_config.py` ist absichtlich nicht versioniert und liegt nur lokal und auf dem Geraet.
+
+### HomeAssistant vorbereiten
+
+Mosquitto-Add-on installieren, einen HA-Benutzer `display` anlegen, die MQTT-Integration verbinden und in
+`configuration.yaml` Statestream aktivieren (danach HA neu starten):
+
+```yaml
+mqtt_statestream:
+  base_topic: statestream
+  publish_attributes: true
+  publish_timestamps: false
+```
+
+`base_topic` muss zu `HASS_BASE_TOPIC` in `settings.py` passen. Welche Topics ankommen, zeigt
+`mosquitto_sub -h <HA-IP> -u display -P '...' -t 'statestream/#' -v`.
 
 ## Neues Widget hinzufuegen
 

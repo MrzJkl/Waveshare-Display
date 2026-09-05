@@ -39,7 +39,6 @@ NATIVE_ADDR_NS = 200           # Settle nach Zeilenadresswechsel vor OE (BASE_AD
 LOOP_MAX_SLEEP_MS = 50
 WIDGET_ROTATE_MS = 15000       # Widget-Wechsel; 0 = nur das erste Widget zeigen
 TRANSITION_MS = 400            # Aus-/Einblenden beim Widget-Wechsel; 0 = hart
-DATA_REFRESH_MS = 6000
 
 WIFI_RETRY_MS = 15000
 WLAN_PM_PERF = 0xA11140
@@ -61,13 +60,33 @@ CPU_FREQ_HZ = 250_000_000
 TEXT_SCALE = 2
 TEXT_COLOR = 7   # Farbindex: Bit 0 rot, Bit 1 gruen, Bit 2 blau -> 7 = weiss
 
+# Wetter-Widget: HomeAssistant weather-Entity (hier DWD)
+WEATHER_ENTITY = "weather.bonn_friesdorf"
+WEATHER_TEMP_COLOR = 7         # weiss
+WEATHER_HUMIDITY_COLOR = 6     # cyan
+WEATHER_WIND_COLOR = 7         # weiss
+
 # Uhr-Widget
 CLOCK_TIME_COLOR = 7           # weiss
 CLOCK_DATE_COLOR = 1           # rot (gelb, wenn der letzte Zeitabgleich aelter als TIME_STALE_MS ist)
 CLOCK_WEEKDAYS = ("MO", "DI", "MI", "DO", "FR", "SA", "SO")
 
+# HomeAssistant via MQTT (Mosquitto + mqtt_statestream), siehe app/shared/mqtt.py und hass.py.
+MQTT_CLIENT_ID = "led-display"
+MQTT_KEEPALIVE_S = 60
+MQTT_RECONNECT_MS = 5000       # erster Wiederverbindungsversuch, verdoppelt sich bis MQTT_RECONNECT_MAX_MS
+MQTT_RECONNECT_MAX_MS = 60000
+MQTT_CONNECT_TIMEOUT_S = 5
+HASS_BASE_TOPIC = "statestream"  # base_topic von mqtt_statestream in HomeAssistant
+
+# Zugangsdaten kommen aus local_config.py auf dem Geraete-Dateisystem (nicht in der Firmware).
 try:
-    from wifi_config import WIFI_PASSWORD, WIFI_SSID
+    import local_config as _local
 except ImportError:
-    WIFI_SSID = ""
-    WIFI_PASSWORD = ""
+    _local = None
+WIFI_SSID = getattr(_local, "WIFI_SSID", "")
+WIFI_PASSWORD = getattr(_local, "WIFI_PASSWORD", "")
+MQTT_HOST = getattr(_local, "MQTT_HOST", "")       # leer = MQTT aus
+MQTT_PORT = getattr(_local, "MQTT_PORT", 1883)
+MQTT_USER = getattr(_local, "MQTT_USER", "")
+MQTT_PASSWORD = getattr(_local, "MQTT_PASSWORD", "")

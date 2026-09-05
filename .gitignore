@@ -36,4 +36,4 @@ __pycache__/
 *.pyc
 
 # Generated MicroPython runtime config
-wifi_config.py
+local_config.py

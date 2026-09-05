@@ -1,8 +1,11 @@
-from app.widgets.clock import ClockWidget
-from app.widgets.homeassistant import HomeAssistantWidget
-from app.widgets.temperature import TemperatureWidget
+# from app.widgets.clock import ClockWidget
+from app.widgets.clock.widget import ClockWidget
+from app.widgets.weather import WeatherWidget
 
 
 def create_default_widgets():
     """Widgets in rotation order; the first one is shown at start."""
-    return [ClockWidget(), TemperatureWidget(), HomeAssistantWidget()]
+    return [
+        ClockWidget(),      # fertig, waehrend der Wetter-Arbeit ausgeblendet
+        WeatherWidget(),
+    ]

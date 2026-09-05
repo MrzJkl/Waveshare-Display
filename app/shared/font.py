@@ -126,6 +126,12 @@ class Font:
             self._palettes[key] = palette
         return palette
 
+    def draw_glyph(self, fb, key, x, y, colour, scale=1):
+        """Draw one glyph by dictionary key with transparent background
+        (keys may be whole words, e.g. icon names)."""
+        fb.blit(self._glyph(key, scale), x, y, 0, self._palette(colour, 0))
+        return x + self.glyph_width(key) * scale
+
     def draw(self, fb, text, x, y, colour, scale=1, background=None):
         """Draw `text` with its top-left corner at (x, y); returns the x after the text.
 
